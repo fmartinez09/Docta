@@ -1,0 +1,17 @@
+{
+  "name": "docta",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "devDependencies": {
+    "eslint": "9.39.5"
+  },
+  "scripts": {
+    "build:web": "npm run build --workspace @docta/web",
+    "dev:web": "npm run dev --workspace @docta/web",
+    "lint:web": "npm run lint --workspace @docta/web",
+    "test:web": "npm run test --workspace @docta/web",
+    "check:web": "npm run lint:web && npm run test:web && npm run build:web"
+  }
+}

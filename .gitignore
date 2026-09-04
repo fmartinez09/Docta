@@ -1,0 +1,17 @@
+.env
+.venv/
+.uv-cache/
+.npm-cache/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+
+node_modules/
+.next/
+coverage/
+
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
