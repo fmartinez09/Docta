@@ -100,7 +100,7 @@ These are contracts in phase 0, not mandates to deploy every final component:
 - Identity: validate standard OIDC JWT claims through an `IdentityProvider` boundary. Production authorization must not depend on a development-only header or hard-coded user.
 - Uploads: expose a presigned-upload contract through an `ObjectStorage` port. Local MinIO is the first adapter.
 - Responses: an SSE-compatible response boundary may emit lifecycle events and one validated final answer. Do not emit raw model tokens before validation.
-- Jobs: call a `JobDispatcher` port. The initial adapter may run inline or use a database-backed test implementation. Redis Streams is the intended durable asynchronous adapter after the skeleton proves the flow; Redis Pub/Sub is not a job queue.
+- Jobs: call a `JobDispatcher` port. Per ADR 0001, Increment 2B replaces runtime inline dispatch with a transactional PostgreSQL outbox and Redis Streams consumer groups before Increment 3. PostgreSQL owns job state; workers use leases, fencing and idempotent execution. Redis Pub/Sub is not a job queue.
 - Retrieval: start with the smallest real PostgreSQL retrieval implementation that satisfies the acceptance tests. Dense retrieval, RRF, and reranking must be added behind the retrieval port, not wired through handlers.
 - Publication: keep versions immutable and activate an indexed corpus through a conditional/atomic pointer update. Phase 0 needs only the single active-version path, not rollback UI or a full publishing workflow.
 
@@ -147,11 +147,10 @@ upload -> process -> index -> retrieve -> generate -> validate -> persist -> res
 - Moodle/LMS integration, mobile apps, and offline mode.
 - Microservices, Kubernetes, Kafka, service mesh, and Elasticsearch.
 - GraphRAG, agents, multi-agent orchestration, and elaborate intent taxonomies.
-- Redis Streams runtime infrastructure until durable asynchronous execution is the next measured need.
+- Redis infrastructure beyond the Increment 2B ingestion scope accepted in ADR 0001.
 - Permanent cross-encoder reranking, advanced hybrid tuning, or learned query routing.
 - Token-by-token output before safety and citation validation.
 - Advanced analytics, dashboards, experimentation platforms, and automated pedagogical scoring.
 - Full publishing UI, rollback UI, and multi-version authoring workflows.
 
 When asked for an out-of-scope feature, identify it as such and propose the smallest compatible seam or ADR; do not silently build it.
-
