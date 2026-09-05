@@ -138,6 +138,8 @@ docker compose --env-file .env -f infra/compose.yaml down
 
 Conversation durability, online retrieval, pedagogical generation and citations are not
 implemented yet. Ingestion currently uses an inline `JobDispatcher` behind a replaceable port, as
-per the repository walking-skeleton guardrails; PostgreSQL remains the durable job state. Redis
-Streams/outbox remains unresolved because `AGENTS.md` defers it while `DOCTA_ARCHITECTURE.md`
-places it in Increment 2. OCR, vector retrieval and model providers remain deliberately absent.
+per the original walking-skeleton baseline; PostgreSQL remains the durable job state.
+[ADR 0001](docs/adr/0001-ingestion-durability-and-response-delivery.md) schedules Redis
+Streams/outbox and crash recovery in Increment 2B, before conversational RAG in Increment 3.
+SSE is accepted for Increment 3; LiteLLM and the tutor model await evaluation. OCR, vector
+retrieval and model providers remain deliberately absent.

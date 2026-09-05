@@ -6,6 +6,11 @@
 **Sistema:** Docta  
 **Enfoque:** monolito modular, KITE y vertical slices
 
+**Actualización 2026-09-05:** [ADR 0001](adr/0001-ingestion-durability-and-response-delivery.md)
+resuelve la discrepancia de alcance: Redis Streams/outbox/worker se implementan como
+Incremento 2B antes del 3; SSE queda aceptado para el 3. LiteLLM es el candidato preferido,
+con despliegue, proveedor, modelo y costes pendientes de evaluación.
+
 ---
 
 ## 0. Propósito y uso de este documento
@@ -2073,7 +2078,11 @@ Redis puede estar presente en infraestructura desde este punto, pero no requiere
 - ningún proveedor OIDC concreto incrustado en dominio;
 - sin OpenUI, retrieval, uploads o UI especulativa.
 
-### Incremento 2 — upload, Redis Streams, ingesta y publicación
+### Incrementos 2 y 2B — upload, ingesta y publicación durable
+
+El incremento 2 existente usa ingesta inline. ADR 0001 asigna outbox, Redis Streams,
+worker, recuperación y reintentos al incremento 2B; no se consideran implementados
+por estar descritos aquí.
 
 - presigned PUT;
 - confirmación y validación;

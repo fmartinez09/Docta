@@ -70,7 +70,7 @@ Use conditional updates or equivalent constraints so invalid transitions and dou
 | `Retriever` | PostgreSQL FTS, course and active-corpus scoped | pgvector dense retrieval, RRF, then measured reranking |
 | `TutorModel` | Deterministic fake in tests; one configured provider in runtime | Gateway, fallback and routing if justified |
 | `ResponseValidator` | Schema, citation, scope and abstention checks | Additional safety/pedagogical evaluators |
-| `JobDispatcher` | Inline adapter behind the port | Redis Streams consumer group with idempotent worker |
+| `JobDispatcher` | Transactional PostgreSQL outbox and Redis Streams ingestion worker (Increment 2B, ADR 0001) | Measured worker scaling |
 | `EventSink` | Structured logs | Distributed traces and product analytics |
 
 The adapters are replaceable because the ports express domain needs, not vendor APIs.
@@ -90,7 +90,7 @@ Exact payload fields may evolve, but the behavioral contract must be testable.
 | `POST /api/v1/conversations/{conversation_id}/messages` | Ask a question | Persists question before RAG; requires idempotency key. |
 | `GET /api/v1/conversations/{conversation_id}` | Read auditable history | Returns ordered statuses, answer and citation metadata. |
 
-For phase 0, the message endpoint may return normal JSON. If SSE is implemented, it emits bounded lifecycle events and a single validated final payload; it does not stream unvalidated model tokens.
+Per ADR 0001, Increment 3 uses SSE for bounded lifecycle events and a single validated, persisted final payload. Queries and history remain JSON. Reconnection reconciles with durable history; no unvalidated model tokens are streamed.
 
 ## 6. Tutor response contract
 
@@ -148,6 +148,16 @@ Each increment must end with runnable tests and a visible vertical improvement.
 - [x] Activate only an indexed immutable corpus version by conditional update.
 - [x] Expose processing failure without losing diagnostic state.
 
+### Increment 2B — durable asynchronous ingestion (ADR 0001)
+
+- [ ] Commit ingestion jobs and outbox events atomically.
+- [ ] Dispatch through Redis Streams and a separate worker process.
+- [ ] Recover abandoned work with leases, fencing and idempotent results.
+- [ ] Bound transient retries and persist terminal failures/dead letters.
+- [ ] Reconcile unfinished jobs after transport loss; retain active corpus invariants.
+- [ ] Prove outages, duplicates, scope validation and restart with isolated real dependencies.
+- [ ] Document reproducible infrastructure and recovery operations.
+
 ### Increment 3 — durable conversation and RAG
 
 - [ ] Create course-scoped conversations.
@@ -157,6 +167,7 @@ Each increment must end with runnable tests and a visible vertical improvement.
 - [ ] Validate answer, evidence and citations.
 - [ ] Atomically persist completed answer/citations or mark failure.
 - [ ] Make retries idempotent.
+- [ ] Deliver SSE lifecycle events and only a validated, persisted final response.
 
 ### Increment 4 — minimal student/teacher UI and end-to-end proof
 
@@ -195,7 +206,7 @@ The walking skeleton is done only when all statements are reproducibly true.
 
 ## 10. Deferred decisions, with seams only
 
-- Redis Streams consumer groups, leases, retries, DLQ/reclaim policy and worker scaling.
+- Worker scaling beyond the Redis Streams ingestion scope of Increment 2B.
 - Dense embeddings, pgvector indexing, hybrid fusion/RRF and cross-encoder reranking.
 - Minimal KITE-style intent routing and richer pedagogical state.
 - Conversation-window summaries and summary versioning.
