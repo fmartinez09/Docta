@@ -18,7 +18,9 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.anyio
-async def test_direct_pdf_upload_indexes_pages_idempotently_and_activates_with_cas() -> None:
+async def test_direct_pdf_upload_indexes_pages_idempotently_and_activates_with_cas(
+    ingestion_runtime,
+) -> None:
     settings = _settings()
     _upgrade_database()
     suffix = uuid4().hex
@@ -61,8 +63,7 @@ async def test_direct_pdf_upload_indexes_pages_idempotently_and_activates_with_c
             source_storage_key = _storage_key(settings, course_a, document_id, version_id)
             storage_keys.append(source_storage_key)
             complete_url = (
-                f"/api/v1/courses/{course_a}/documents/{document_id}/"
-                f"versions/{version_id}/complete"
+                f"/api/v1/courses/{course_a}/documents/{document_id}/versions/{version_id}/complete"
             )
             completed = await client.post(
                 complete_url,
@@ -71,6 +72,9 @@ async def test_direct_pdf_upload_indexes_pages_idempotently_and_activates_with_c
                     "idempotency-key": "confirm-positive",
                 },
             )
+            assert completed.status_code == 202
+            assert completed.json()["state"] == "QUEUED"
+            completed = await _finish_ingestion(client, completed, "token-a", ingestion_runtime)
             repeated_completion = await client.post(
                 complete_url,
                 headers={
@@ -86,24 +90,24 @@ async def test_direct_pdf_upload_indexes_pages_idempotently_and_activates_with_c
             assert immutable_storage_version is not None
             assert immutable_storage_version[0] is not None
             await _put_direct(repeated_upload, _pdf_bytes("Overwritten after confirmation"))
-            assert storage.read(
-                source_storage_key,
-                version_id=immutable_storage_version[0],
-                max_bytes=settings.max_document_bytes,
-            ) == content
+            assert (
+                storage.read(
+                    source_storage_key,
+                    version_id=immutable_storage_version[0],
+                    max_bytes=settings.max_document_bytes,
+                )
+                == content
+            )
             own_status = await client.get(
                 complete_url.removesuffix("/complete"),
                 headers={"authorization": "Bearer token-a"},
             )
             cross_course_status = await client.get(
-                (
-                    f"/api/v1/courses/{course_a}/documents/{document_id}/"
-                    f"versions/{version_id}"
-                ),
+                (f"/api/v1/courses/{course_a}/documents/{document_id}/versions/{version_id}"),
                 headers={"authorization": "Bearer token-b"},
             )
 
-            assert completed.status_code == 202
+            assert completed.status_code == 200
             assert completed.json()["state"] == "INDEXED", completed.json()
             assert completed.json()["job_state"] == "SUCCEEDED"
             assert repeated_completion.status_code == 202
@@ -166,7 +170,9 @@ async def test_direct_pdf_upload_indexes_pages_idempotently_and_activates_with_c
 
 
 @pytest.mark.anyio
-async def test_textless_pdf_records_ocr_required_and_survives_app_restart() -> None:
+async def test_textless_pdf_records_ocr_required_and_survives_app_restart(
+    ingestion_runtime,
+) -> None:
     settings = _settings()
     _upgrade_database()
     identity = AuthenticatedIdentity(
@@ -223,6 +229,13 @@ async def test_textless_pdf_records_ocr_required_and_survives_app_restart() -> N
                 },
             )
             assert completed.status_code == 202
+            assert completed.json()["state"] == "QUEUED"
+            completed = await _finish_ingestion(
+                client,
+                completed,
+                "teacher-token",
+                ingestion_runtime,
+            )
             assert completed.json()["state"] == "OCR_REQUIRED"
             assert completed.json()["failure_code"] == "DOCUMENT_OCR_REQUIRED"
             assert completed.json()["job_state"] == "FAILED"
@@ -260,6 +273,7 @@ async def test_textless_pdf_records_ocr_required_and_survives_app_restart() -> N
                 },
             )
             assert tampered.status_code == 202
+            tampered = await _finish_ingestion(client, tampered, "teacher-token", ingestion_runtime)
             assert tampered.json()["state"] == "REJECTED"
             assert tampered.json()["failure_code"] == "DOCUMENT_CHECKSUM_MISMATCH"
 
@@ -332,16 +346,22 @@ async def test_activation_rejects_building_corpus() -> None:
 
 def _settings() -> Settings:
     return Settings(
-        s3_endpoint_url="http://127.0.0.1:9000",
-        s3_access_key="docta-local",
-        s3_secret_key="docta-local-secret",
-        s3_bucket="docta-integration-documents",
         upload_ttl_seconds=60,
         max_document_bytes=1024 * 1024,
         max_document_pages=10,
         chunk_size_characters=400,
         chunk_overlap_characters=40,
     )
+
+
+async def _finish_ingestion(client, accepted, token, runtime):
+    url = str(accepted.request.url).removesuffix("/complete")
+    for _ in range(30):
+        runtime.tick()
+        response = await client.get(url, headers={"authorization": f"Bearer {token}"})
+        if response.json()["state"] not in {"QUEUED", "PROCESSING"}:
+            return response
+    raise AssertionError("ingestion did not reach a terminal state")
 
 
 def _storage(settings: Settings) -> S3ObjectStorage:

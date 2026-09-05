@@ -21,6 +21,10 @@ def test_settings_accept_local_postgres_and_minio_urls() -> None:
         ("database_url", "sqlite:///docta.db"),
         ("minio_health_url", "ftp://localhost/health"),
         ("dependency_timeout_seconds", 0),
+        ("redis_url", "https://localhost:6379"),
+        ("job_lease_seconds", 0),
+        ("job_max_attempts", 0),
+        ("job_retry_base_seconds", 0),
     ],
 )
 def test_settings_fail_closed_for_invalid_dependency_config(field: str, value: object) -> None:

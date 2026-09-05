@@ -1,9 +1,11 @@
 # Docta
 
 Docta is being built as a trustworthy pedagogical RAG tutor. This repository currently contains
-Increments 0 through 2 of the [walking skeleton](docs/WALKING_SKELETON.md): an executable Next.js
+Increments 0 through 2B of the [walking skeleton](docs/WALKING_SKELETON.md): an executable Next.js
 web app, a FastAPI boundary, PostgreSQL/MinIO infrastructure, OIDC authentication, course-scoped
 membership, direct PDF upload, page-aware ingestion, PostgreSQL FTS and atomic corpus activation.
+Ingestion runs in a separate worker through a PostgreSQL outbox and Redis Streams, with
+idempotent execution, leases, bounded retries and recovery after interruption.
 
 ## Prerequisites
 
@@ -21,6 +23,8 @@ npm install
 uv sync --cache-dir .uv-cache
 docker compose --env-file .env -f infra/compose.yaml up -d --wait
 uv run --cache-dir .uv-cache alembic -c apps/api/alembic.ini upgrade head
+docker compose -f infra/compose.test.yaml up -d --wait
+docker compose --env-file .env -f infra/compose.yaml --profile worker build worker
 uv run --cache-dir .uv-cache pytest tests/unit
 npm run lint:web
 npm run test:web
@@ -30,20 +34,25 @@ npm run build:web
 docker compose --env-file .env -f infra/compose.yaml config --quiet
 ```
 
-The integration suite expects the Compose dependencies to be healthy. It applies the migration
-from a clean Alembic baseline and verifies the real API readiness path against PostgreSQL and
-MinIO.
+The integration suite uses `infra/compose.test.yaml` on ports 55432 (PostgreSQL), 56379
+(Redis), and 59000 (MinIO). Each run creates a separate database, bucket and stream and
+cleans only those generated resources. Its destructive migration rebuild never targets `.env`
+or the development database. A Docker-worker test restarts the dedicated test services and
+uses the built `docta-worker:latest` image; do not run multiple integration suites concurrently.
+Unit tests do not need these services. If Windows denies the
+default pytest temporary directory, append `--basetemp=.pytest_cache/local-test-temp`.
 
 ## Run locally
 
-Start PostgreSQL and MinIO first, and apply pending migrations:
+Start PostgreSQL, Redis and MinIO first, and apply pending migrations. When upgrading from
+Increment 2, stop the old API and any workers before migration 0006:
 
 ```powershell
 docker compose --env-file .env -f infra/compose.yaml up -d --wait
 uv run --cache-dir .uv-cache alembic -c apps/api/alembic.ini upgrade head
 ```
 
-Then use two terminals:
+Then use three terminals (API, web, worker):
 
 ```powershell
 uv run --cache-dir .uv-cache uvicorn docta_api.main:app --app-dir apps/api/src --env-file .env --host 127.0.0.1 --port 8000
@@ -52,6 +61,20 @@ uv run --cache-dir .uv-cache uvicorn docta_api.main:app --app-dir apps/api/src -
 ```powershell
 npm run dev:web
 ```
+
+```powershell
+uv run --cache-dir .uv-cache python -m docta_api.worker
+```
+
+Alternatively, run the worker in Docker after migrations, instead of the third terminal:
+
+```powershell
+docker compose --env-file .env -f infra/compose.yaml --profile worker up -d --build worker
+```
+
+The worker image installs from `uv.lock`, runs as a non-root user, and restarts unless stopped.
+Its build context excludes `.env` and all files except package metadata and API source.
+See the [ingestion operations runbook](docs/runbooks/ingestion.md) for recovery and diagnostics.
 
 Open `http://127.0.0.1:3000`. Direct service probes are available at:
 
@@ -69,7 +92,8 @@ Authenticated course operations are available at:
 - `POST /api/v1/courses/{course_id}/documents/uploads` creates an immutable document version and
   returns a short-lived presigned PUT. It requires `Idempotency-Key`.
 - `POST /api/v1/courses/{course_id}/documents/{document_id}/versions/{version_id}/complete`
-  validates the object and dispatches ingestion. It also requires `Idempotency-Key`.
+  validates the object and commits ingestion/outbox together, returning `202` with `QUEUED`.
+  It also requires `Idempotency-Key`. The worker completes indexing asynchronously.
 - `GET /api/v1/courses/{course_id}/documents/{document_id}/versions/{version_id}` returns the
   durable processing state and safe failure code.
 - `POST /api/v1/courses/{course_id}/corpus/activate` atomically activates only a `READY` corpus
@@ -116,8 +140,10 @@ try {
 }
 ```
 
-The upload command forwards the exact presigned headers returned by FastAPI and never prints the
-token or the presigned URL.
+The upload command forwards the exact presigned headers returned by FastAPI, polls the existing
+document version for up to ten minutes, and activates only after indexing. It never prints the
+token or presigned URL. If the wait expires, it prints the stable identifiers to query; it does
+not upload another copy.
 
 The object-storage adapter uses `DOCTA_S3_ENDPOINT_URL`, `DOCTA_S3_ACCESS_KEY`,
 `DOCTA_S3_SECRET_KEY`, `DOCTA_S3_BUCKET`, and `DOCTA_S3_REGION`. Upload, page and chunk limits are
@@ -137,9 +163,11 @@ docker compose --env-file .env -f infra/compose.yaml down
 ## Current boundary
 
 Conversation durability, online retrieval, pedagogical generation and citations are not
-implemented yet. Ingestion currently uses an inline `JobDispatcher` behind a replaceable port, as
-per the original walking-skeleton baseline; PostgreSQL remains the durable job state.
-[ADR 0001](docs/adr/0001-ingestion-durability-and-response-delivery.md) schedules Redis
-Streams/outbox and crash recovery in Increment 2B, before conversational RAG in Increment 3.
+implemented yet. Ingestion uses a transactional `JobDispatcher`, Redis Streams and a separate
+worker; PostgreSQL owns job state and the outbox. Redis unavailability leaves confirmed work
+queued and does not trigger inline processing. API readiness covers PostgreSQL and object
+storage because it can accept durable work while Redis is unavailable; it does not assert
+that a worker is healthy. Worker failures are visible in structured logs and database job state.
+[ADR 0001](docs/adr/0001-ingestion-durability-and-response-delivery.md) records the scope.
 SSE is accepted for Increment 3; LiteLLM and the tutor model await evaluation. OCR, vector
 retrieval and model providers remain deliberately absent.

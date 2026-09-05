@@ -10,6 +10,7 @@ import sys
 from collections.abc import Mapping
 from hashlib import sha256
 from pathlib import Path
+from time import monotonic, sleep
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -129,6 +130,19 @@ def _upload_dev_pdf(
         },
     )
 
+    deadline = monotonic() + 600
+    while completed.get("state") in {"QUEUED", "PROCESSING"}:
+        if monotonic() >= deadline:
+            raise DevPDFUploadError(
+                f"Ingestion is still pending. Query course {course_id}, document {document_id}, "
+                f"version {version_id}; do not upload again. Check the worker."
+            )
+        sleep(1)
+        completed = _request_json(
+            client, "observe ingestion", "GET",
+            f"{base_url}/api/v1/courses/{course_id}/documents/{document_id}/versions/{version_id}",
+            headers=authorization,
+        )
     state = _required_string(completed, "state", "completion response")
     corpus_version_id = completed.get("corpus_version_id")
     activation: Mapping[str, object] | None = None

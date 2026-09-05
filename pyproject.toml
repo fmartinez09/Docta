@@ -16,6 +16,7 @@ dependencies = [
   "pymupdf>=1.26,<2",
   "pyjwt[crypto]>=2.10,<3",
   "pydantic-settings>=2.10,<3",
+  "redis>=6.4,<7",
   "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.35,<1",
 ]
@@ -33,7 +34,7 @@ packages = ["apps/api/src/docta_api"]
 addopts = "-ra --strict-markers"
 testpaths = ["tests"]
 markers = [
-  "integration: requires the local PostgreSQL and MinIO services",
+  "integration: requires the local PostgreSQL, Redis and MinIO services",
 ]
 
 [tool.ruff]
