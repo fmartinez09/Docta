@@ -123,9 +123,7 @@ class CourseMembership(Base):
 
 class Document(Base):
     __tablename__ = "documents"
-    __table_args__ = (
-        UniqueConstraint("course_id", "id", name="uq_documents_course_id_id"),
-    )
+    __table_args__ = (UniqueConstraint("course_id", "id", name="uq_documents_course_id_id"),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     course_id: Mapped[UUID] = mapped_column(
@@ -299,6 +297,7 @@ class Chunk(Base):
 class IngestionJob(Base):
     __tablename__ = "ingestion_jobs"
     __table_args__ = (
+        UniqueConstraint("course_id", "id", name="uq_ingestion_jobs_course_id_id"),
         ForeignKeyConstraint(
             ["course_id", "document_version_id"],
             ["document_versions.course_id", "document_versions.id"],
@@ -338,3 +337,36 @@ class IngestionJob(Base):
         server_default=func.now(),
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["course_id", "job_id"],
+            ["ingestion_jobs.course_id", "ingestion_jobs.id"],
+            name="fk_outbox_course_job",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("job_id", "kind", name="uq_outbox_job_kind"),
+        CheckConstraint("kind IN ('ingestion', 'dead')", name="ck_outbox_kind"),
+        Index("ix_outbox_dispatch", "published_at", "available_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    course_id: Mapped[UUID] = mapped_column(nullable=False)
+    job_id: Mapped[UUID] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    publish_token: Mapped[UUID | None] = mapped_column()
+    publish_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

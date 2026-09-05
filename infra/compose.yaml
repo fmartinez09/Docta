@@ -1,6 +1,39 @@
 name: docta
 
 services:
+  worker:
+    profiles: ["worker"]
+    build:
+      context: ..
+      dockerfile: infra/worker.Dockerfile
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DOCTA_DATABASE_URL: postgresql://${POSTGRES_USER:-docta}:${POSTGRES_PASSWORD:-docta_local_only}@postgres:5432/${POSTGRES_DB:-docta}
+      DOCTA_MINIO_HEALTH_URL: http://minio:9000/minio/health/ready
+      DOCTA_S3_ENDPOINT_URL: http://minio:9000
+      DOCTA_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  redis:
+    image: redis:7.4.9-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - redis-data:/data
+
   postgres:
     image: postgres:16.10-alpine
     environment:
@@ -35,6 +68,6 @@ services:
       - minio-data:/data
 
 volumes:
+  redis-data:
   postgres-data:
   minio-data:
-

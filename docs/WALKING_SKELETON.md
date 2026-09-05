@@ -150,13 +150,20 @@ Each increment must end with runnable tests and a visible vertical improvement.
 
 ### Increment 2B — durable asynchronous ingestion (ADR 0001)
 
-- [ ] Commit ingestion jobs and outbox events atomically.
-- [ ] Dispatch through Redis Streams and a separate worker process.
-- [ ] Recover abandoned work with leases, fencing and idempotent results.
-- [ ] Bound transient retries and persist terminal failures/dead letters.
-- [ ] Reconcile unfinished jobs after transport loss; retain active corpus invariants.
-- [ ] Prove outages, duplicates, scope validation and restart with isolated real dependencies.
-- [ ] Document reproducible infrastructure and recovery operations.
+- [x] Commit ingestion jobs and outbox events atomically.
+- [x] Dispatch through Redis Streams and a separate worker process.
+- [x] Recover abandoned work with leases, fencing and idempotent results.
+- [x] Bound transient retries and persist terminal failures/dead letters.
+- [x] Reconcile unfinished jobs after transport loss; retain active corpus invariants.
+- [x] Prove outages, duplicates, scope validation and restart with isolated real dependencies.
+- [x] Document reproducible infrastructure and recovery operations.
+
+Evidence: `tests/integration/test_jobs.py` exercises transaction rollback, duplicate publication,
+commit-before-ACK recovery, expired-worker fencing, retry exhaustion, transport scope denial,
+lost-stream reconciliation, and native/Docker worker execution. The Docker case restarts the
+isolated PostgreSQL, Redis and MinIO services before completing the committed upload.
+`tests/integration/test_documents.py` retains PDF, provenance and publication checks.
+Operational limits and recovery are documented in `docs/runbooks/ingestion.md`.
 
 ### Increment 3 — durable conversation and RAG
 

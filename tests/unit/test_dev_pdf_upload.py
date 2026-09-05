@@ -14,16 +14,20 @@ VERSION_ID = "fa8f571d-0b00-40a5-a1b2-83c682f87dac"
 CORPUS_ID = "e8cb44e0-2788-402c-b283-5cde75df1fa8"
 
 
-def test_upload_dev_pdf_uses_public_api_and_signed_storage_contract(tmp_path: Path) -> None:
+def test_upload_dev_pdf_uses_public_api_and_signed_storage_contract(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("docta_api.dev_pdf_upload.sleep", lambda _: None)
     pdf_path = tmp_path / "lesson.pdf"
     pdf_bytes = b"%PDF-1.7\ntext-based development fixture"
     pdf_path.write_bytes(pdf_bytes)
     observed: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.headers.get("authorization") == "Bearer signed-access-token" or str(
-            request.url
-        ) == UPLOAD_URL
+        assert (
+            request.headers.get("authorization") == "Bearer signed-access-token"
+            or str(request.url) == UPLOAD_URL
+        )
         if request.url.path == "/api/v1/courses":
             observed["course_body"] = json.loads(request.content)
             return httpx.Response(
@@ -54,6 +58,9 @@ def test_upload_dev_pdf_uses_public_api_and_signed_storage_contract(tmp_path: Pa
             return httpx.Response(200, request=request)
         if request.url.path.endswith("/complete"):
             observed["complete_idempotency"] = request.headers["idempotency-key"]
+            return httpx.Response(202, json={"state": "QUEUED"}, request=request)
+        if request.method == "GET" and request.url.path.endswith(f"/versions/{VERSION_ID}"):
+            observed["status_read"] = True
             return httpx.Response(
                 202,
                 json={
@@ -92,6 +99,7 @@ def test_upload_dev_pdf_uses_public_api_and_signed_storage_contract(tmp_path: Pa
     }
     assert str(observed["upload_idempotency"]).startswith("dev-upload-")
     assert str(observed["complete_idempotency"]).startswith("dev-complete-")
+    assert observed["status_read"] is True
     assert observed["put_body"] == pdf_bytes
     assert observed["put_content_type"] == "application/pdf"
     assert observed["put_checksum"] == "server-signed-hash"

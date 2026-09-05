@@ -13,7 +13,6 @@ from docta_api.config import Settings, get_settings
 from docta_api.courses import CourseService
 from docta_api.courses import router as courses_router
 from docta_api.database import Database
-from docta_api.document_parser import DocumentParser
 from docta_api.documents import DocumentService
 from docta_api.documents import router as documents_router
 from docta_api.health import MinioProbe, PostgresProbe, ReadinessProbes
@@ -22,9 +21,8 @@ from docta_api.identity import (
     OIDCJWTIdentityProvider,
     UnconfiguredIdentityProvider,
 )
-from docta_api.ingestion import IngestionWorker, InlineJobDispatcher, JobDispatcher
+from docta_api.jobs import JobDispatcher, OutboxJobDispatcher
 from docta_api.object_storage import ObjectStorage, UnconfiguredObjectStorage
-from docta_api.pymupdf_parser import PyMuPDFDocumentParser
 from docta_api.s3_object_storage import S3ObjectStorage
 
 
@@ -95,7 +93,6 @@ def create_app(
     course_service: CourseService | None = None,
     document_service: DocumentService | None = None,
     object_storage: ObjectStorage | None = None,
-    document_parser: DocumentParser | None = None,
     job_dispatcher: JobDispatcher | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
@@ -110,20 +107,7 @@ def create_app(
     if document_service is None:
         assert database is not None
         resolved_object_storage = object_storage or _default_object_storage(resolved_settings)
-        parser = document_parser or PyMuPDFDocumentParser(
-            max_pages=resolved_settings.max_document_pages
-        )
-        dispatcher = job_dispatcher
-        if dispatcher is None:
-            worker = IngestionWorker(
-                database=database,
-                object_storage=resolved_object_storage,
-                parser=parser,
-                max_document_bytes=resolved_settings.max_document_bytes,
-                chunk_size_characters=resolved_settings.chunk_size_characters,
-                chunk_overlap_characters=resolved_settings.chunk_overlap_characters,
-            )
-            dispatcher = InlineJobDispatcher(worker)
+        dispatcher = job_dispatcher or OutboxJobDispatcher()
         resolved_document_service = DocumentService(
             database=database,
             object_storage=resolved_object_storage,
@@ -185,7 +169,18 @@ def create_app(
         request: Request,
         call_next: Callable[[Request], Awaitable[Any]],
     ):
-        request_id = request.headers.get("x-request-id") or str(uuid4())
+        supplied_id = request.headers.get("x-request-id", "")
+        request_id = (
+            supplied_id
+            if (
+                0 < len(supplied_id) <= 100
+                and all(
+                    character.isascii() and (character.isalnum() or character in "-_.")
+                    for character in supplied_id
+                )
+            )
+            else str(uuid4())
+        )
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers["x-request-id"] = request_id

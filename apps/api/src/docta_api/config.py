@@ -51,6 +51,22 @@ class Settings(BaseSettings):
     chunk_size_characters: int = Field(default=1600, ge=400, le=8000)
     chunk_overlap_characters: int = Field(default=160, ge=0, le=1000)
     pipeline_version: str = Field(default="phase0-pymupdf-v1", min_length=1, max_length=100)
+    redis_url: SecretStr = SecretStr("redis://127.0.0.1:6379/0")
+    redis_stream: str = Field(default="docta:jobs:ingestion:v1", min_length=1)
+    redis_group: str = Field(default="docta-ingestion-workers-v1", min_length=1)
+    job_lease_seconds: int = Field(default=300, ge=1, le=3600)
+    job_max_attempts: int = Field(default=3, ge=1, le=10)
+    job_retry_base_seconds: float = Field(default=2, gt=0, le=60)
+    job_reconcile_seconds: int = Field(default=30, ge=1, le=300)
+
+    @model_validator(mode="after")
+    def validate_redis_configuration(self) -> "Settings":
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(self.redis_url.get_secret_value())
+        if parsed.scheme not in {"redis", "rediss"} or not parsed.hostname:
+            raise ValueError("Redis URL must use redis or rediss with a hostname")
+        return self
 
     @model_validator(mode="after")
     def validate_oidc_configuration(self) -> "Settings":
