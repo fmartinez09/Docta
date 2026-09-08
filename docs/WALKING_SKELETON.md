@@ -167,22 +167,58 @@ Operational limits and recovery are documented in `docs/runbooks/ingestion.md`.
 
 ### Increment 3 — durable conversation and RAG
 
-- [ ] Create course-scoped conversations.
-- [ ] Persist question as `pending` before retrieval/model invocation.
-- [ ] Retrieve only from the active corpus and same course.
-- [ ] Generate a typed pedagogical result through the model port.
-- [ ] Validate answer, evidence and citations.
-- [ ] Atomically persist completed answer/citations or mark failure.
-- [ ] Make retries idempotent.
-- [ ] Deliver SSE lifecycle events and only a validated, persisted final response.
+- [x] Create course-scoped conversations.
+- [x] Persist question as `pending` before retrieval/model invocation.
+- [x] Retrieve only from the active corpus and same course.
+- [x] Generate a typed pedagogical result through the model port.
+- [x] Validate answer, evidence and citations.
+- [x] Atomically persist completed answer/citations or mark failure.
+- [x] Make retries idempotent.
+- [x] Deliver SSE lifecycle events and only a validated, persisted final response.
+
+Evidence (2026-09-07): `tests/integration/test_conversations.py` passes 16 cases covering the
+real PDF-to-answer API path, owner/membership isolation, active/captured corpus retrieval,
+durable evidence before model invocation, abstention, invalid citations/quotes, atomic rollback,
+concurrent retries, SSE disconnection, history after withdrawal/restart, bounded prompts and
+expired-work fencing. The full repository Python suite passes 110 tests, including migration
+rebuild and dependency/worker restart; web lint, four web tests and the production build pass.
+
+`TutorModel` has a real configurable HTTP adapter with schema/refusal/timeout/output bounds;
+automated generation uses deterministic test doubles. Concrete provider/model selection,
+credentials and a live quality evaluation remain pending. Deterministic response validation
+proves schema and citation provenance, not semantic entailment of every generated sentence.
+See ADR 0002 and `docs/runbooks/conversations.md` for the contract, recovery and remaining gates.
 
 ### Increment 4 — minimal student/teacher UI and end-to-end proof
 
-- [ ] Teacher can create a course, upload a PDF and observe indexing state.
-- [ ] Student can ask and see pending/completed/failed state.
-- [ ] Student sees citations with document, page and fragment provenance.
-- [ ] Student sees a clear abstention when evidence is insufficient.
-- [ ] Run the browser-level happy path against real API, PostgreSQL and MinIO.
+- [x] Teacher can create a course, upload a PDF and observe indexing state.
+- [x] Student can ask and see pending/completed/failed state.
+- [x] Student sees citations with document, page and fragment provenance.
+- [x] Student sees a clear abstention when evidence is insufficient.
+- [x] Run the browser-level happy path against real API, PostgreSQL and MinIO.
+
+Evidence (2026-09-07): `tests/e2e/test_browser.py` runs the production Next.js build in
+headless Edge/Chromium against FastAPI, PostgreSQL, MinIO and the ingestion worker. It proves
+PKCE login with signed JWT verification, teacher creation/upload/publication, another member's
+student workspace, pending recovery after reload, citations, abstention, persisted failure,
+CSRF rejection, teacher-only document access, HttpOnly session and logout. Generation and the
+OIDC issuer are deterministic test-only adapters. Two additional conversation integration
+tests prove discovery isolation and durable course-creation retries. See ADR 0003 and
+`docs/runbooks/browser-workspace.md`; live OIDC registration and model quality remain deployment
+checks, not claims established by deterministic browser tests.
+
+Final verification (2026-09-08): 114 Python unit/integration tests, the browser test, ten web tests,
+Ruff, ESLint and the production web build pass. The worker image builds successfully. The local
+Unsloth server's schema grammar incompatibility is covered by an explicit `llama_cpp` profile
+and a test proving that oversized outputs are still rejected locally. The initial live-model
+request timed out and its tunnel later became unreachable. After restoring Unsloth and selecting
+the explicit provider profile with a 512-token budget, a synthetic Qwen3.5-9B request completed
+in 5.6 seconds with one citation passing the full local validator. This establishes a live
+adapter smoke test; pedagogical quality and a production-browser model evaluation remain open.
+
+The subsequent login regression check starts on `localhost`, redirects to the configured
+`127.0.0.1` origin before creating the PKCE cookie, and completes the browser flow. The existing
+local ZITADEL stack was restarted and the real login route now reaches its sign-in screen.
 
 ## 8. Acceptance tests
 

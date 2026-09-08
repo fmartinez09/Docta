@@ -56,6 +56,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-docta-local}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-docta-local-secret}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${DOCTA_WEB_ORIGIN:-http://127.0.0.1:3000}
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"

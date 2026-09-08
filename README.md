@@ -1,11 +1,16 @@
 # Docta
 
 Docta is being built as a trustworthy pedagogical RAG tutor. This repository currently contains
-Increments 0 through 2B of the [walking skeleton](docs/WALKING_SKELETON.md): an executable Next.js
+Increments 0 through 4 of the [walking skeleton](docs/WALKING_SKELETON.md): an executable Next.js
 web app, a FastAPI boundary, PostgreSQL/MinIO infrastructure, OIDC authentication, course-scoped
 membership, direct PDF upload, page-aware ingestion, PostgreSQL FTS and atomic corpus activation.
 Ingestion runs in a separate worker through a PostgreSQL outbox and Redis Streams, with
 idempotent execution, leases, bounded retries and recovery after interruption.
+Conversation questions are durable before scoped FTS retrieval, tutor generation and validation.
+The API delivers lifecycle events and a validated persisted result over SSE, with auditable citations,
+idempotent retries and explicit failure recovery. The teacher/student workspace now includes
+OIDC login, PDF publication, durable chat, citation fragments and visible failures/abstention.
+See the [step-by-step browser runbook](docs/runbooks/browser-workspace.md).
 
 ## Prerequisites
 
@@ -29,8 +34,9 @@ uv run --cache-dir .uv-cache pytest tests/unit
 npm run lint:web
 npm run test:web
 uv run --cache-dir .uv-cache ruff check apps/api/src scripts tests
-uv run --cache-dir .uv-cache pytest
 npm run build:web
+npx playwright install chromium
+uv run --cache-dir .uv-cache pytest
 docker compose --env-file .env -f infra/compose.yaml config --quiet
 ```
 
@@ -40,7 +46,10 @@ cleans only those generated resources. Its destructive migration rebuild never t
 or the development database. A Docker-worker test restarts the dedicated test services and
 uses the built `docta-worker:latest` image; do not run multiple integration suites concurrently.
 Unit tests do not need these services. If Windows denies the
-default pytest temporary directory, append `--basetemp=.pytest_cache/local-test-temp`.
+default pytest temporary directory, use a fresh directory under `$env:TEMP` and
+`-p no:cacheprovider --basetemp=$doctaTestTemp` as documented in the browser runbook.
+Browser tests use the production build and Chromium; an installed Microsoft Edge can be selected
+with `$env:DOCTA_E2E_BROWSER_CHANNEL = "msedge"` instead of downloading Chromium.
 
 ## Run locally
 
@@ -62,6 +71,8 @@ uv run --cache-dir .uv-cache uvicorn docta_api.main:app --app-dir apps/api/src -
 npm run dev:web
 ```
 
+For the current local setup on `127.0.0.1:3100`, use `npm run dev:web:local` instead.
+
 ```powershell
 uv run --cache-dir .uv-cache python -m docta_api.worker
 ```
@@ -76,7 +87,14 @@ The worker image installs from `uv.lock`, runs as a non-root user, and restarts 
 Its build context excludes `.env` and all files except package metadata and API source.
 See the [ingestion operations runbook](docs/runbooks/ingestion.md) for recovery and diagnostics.
 
-Open `http://127.0.0.1:3000`. Direct service probes are available at:
+Open the configured web origin (default `http://127.0.0.1:3000`).
+
+For the workspace login, first register `http://127.0.0.1:3000/auth/callback` in your public OIDC
+application, configure its Client ID and generate `DOCTA_WEB_SESSION_SECRET` in `.env`.
+Next.js loads the root `.env` server-side. See the [browser runbook](docs/runbooks/browser-workspace.md)
+for exact steps, role provisioning limits and a reproducible browser test.
+
+Direct service probes are available at:
 
 - API liveness: `http://127.0.0.1:8000/api/v1/health/live`
 - API readiness: `http://127.0.0.1:8000/api/v1/health/ready`
@@ -86,7 +104,10 @@ Open `http://127.0.0.1:3000`. Direct service probes are available at:
 Authenticated course operations are available at:
 
 - `POST /api/v1/courses` creates a course and atomically makes the authenticated identity its
-  teacher.
+  teacher. An `Idempotency-Key` makes retries durable; the UI always supplies one.
+- `GET /api/v1/courses` lists the current identity's courses; course document and conversation
+  lists are available under `/api/v1/courses/{course_id}/documents` and `/conversations`.
+  Document state lists require teacher membership; conversations are private to their owner.
 - `GET /api/v1/courses/{course_id}` returns a course only when the authenticated identity is a
   member. Missing and unauthorized courses deliberately have the same safe response.
 - `POST /api/v1/courses/{course_id}/documents/uploads` creates an immutable document version and
@@ -98,6 +119,18 @@ Authenticated course operations are available at:
   durable processing state and safe failure code.
 - `POST /api/v1/courses/{course_id}/corpus/activate` atomically activates only a `READY` corpus
   when `expected_course_version` still matches.
+- `POST /api/v1/courses/{course_id}/conversations` creates a member's private conversation;
+  it requires `Idempotency-Key`.
+- `POST /api/v1/conversations/{conversation_id}/messages` accepts a JSON `question` and
+  `Idempotency-Key`, persists it, and returns SSE progress and the committed terminal result.
+- `GET /api/v1/conversations/{conversation_id}` returns paginated ordered durable history.
+- `GET /api/v1/conversations/{conversation_id}/messages/{message_id}` reconciles a single message.
+
+For real tutor responses, configure `DOCTA_TUTOR_ENDPOINT_URL`, `DOCTA_TUTOR_MODEL` and
+`DOCTA_TUTOR_API_KEY` together. The endpoint must support the Chat Completions strict JSON Schema
+contract. No provider is selected by default; missing configuration produces `MODEL_NOT_CONFIGURED`
+when evidence requires generation. See the [conversation runbook](docs/runbooks/conversations.md)
+for requests, limits, recovery and the live-model evaluation still required before a student pilot.
 
 Configure `DOCTA_OIDC_ISSUER`, `DOCTA_OIDC_AUDIENCE`, and `DOCTA_OIDC_JWKS_URL` together to use
 these endpoints. Only RS256 bearer tokens with valid signature, issuer, audience, subject, issued
@@ -162,12 +195,14 @@ docker compose --env-file .env -f infra/compose.yaml down
 
 ## Current boundary
 
-Conversation durability, online retrieval, pedagogical generation and citations are not
-implemented yet. Ingestion uses a transactional `JobDispatcher`, Redis Streams and a separate
+Conversation durability, active-corpus FTS, typed tutor generation, evidence/citation validation
+and SSE are implemented at the API boundary. Ingestion uses a transactional `JobDispatcher`, Redis Streams and a separate
 worker; PostgreSQL owns job state and the outbox. Redis unavailability leaves confirmed work
 queued and does not trigger inline processing. API readiness covers PostgreSQL and object
 storage because it can accept durable work while Redis is unavailable; it does not assert
 that a worker is healthy. Worker failures are visible in structured logs and database job state.
 [ADR 0001](docs/adr/0001-ingestion-durability-and-response-delivery.md) records the scope.
-SSE is accepted for Increment 3; LiteLLM and the tutor model await evaluation. OCR, vector
-retrieval and model providers remain deliberately absent.
+[ADR 0002](docs/adr/0002-durable-conversation-and-scoped-rag.md) records conversation semantics.
+The real HTTP adapter is configurable; concrete provider/model selection and live pedagogical
+evaluation remain open. Automated tests use deterministic model fakes and HTTP transport doubles.
+OCR, vector retrieval, gateway deployment and student/teacher UI remain outside this increment.

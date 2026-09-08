@@ -37,7 +37,7 @@ services:
       MINIO_ROOT_USER: docta-test
       MINIO_ROOT_PASSWORD: docta-test-secret
     ports:
-      - "127.0.0.1:59000:9000"
+      - "127.0.0.1:${DOCTA_TEST_MINIO_PORT:-59000}:9000"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 2s

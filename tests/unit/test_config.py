@@ -107,3 +107,32 @@ def test_chunk_overlap_must_be_smaller_than_chunk_size() -> None:
             chunk_size_characters=400,
             chunk_overlap_characters=400,
         )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"tutor_model": "configured-model"},
+        {"tutor_endpoint_url": "https://model.test/v1/chat/completions"},
+        {"tutor_timeout_seconds": 90},
+        {"tutor_max_output_tokens": 0},
+        {
+            "tutor_model": "model",
+            "tutor_api_key": " ",
+            "tutor_endpoint_url": "https://model.test/v1/chat/completions",
+        },
+        {
+            "tutor_model": "model",
+            "tutor_api_key": "test-key",
+            "tutor_endpoint_url": "https://model.test/v1/chat/completions?token=secret",
+        },
+    ],
+)
+def test_tutor_configuration_fails_closed(values):
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://docta:secret@localhost:5432/docta",
+            minio_health_url="http://localhost:9000/health",
+            **values,
+        )

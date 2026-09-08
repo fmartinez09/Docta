@@ -10,6 +10,7 @@
   "scripts": {
     "build:web": "npm run build --workspace @docta/web",
     "dev:web": "npm run dev --workspace @docta/web",
+    "dev:web:local": "npm run dev:local --workspace @docta/web",
     "lint:web": "npm run lint --workspace @docta/web",
     "test:web": "npm run test --workspace @docta/web",
     "check:web": "npm run lint:web && npm run test:web && npm run build:web"
