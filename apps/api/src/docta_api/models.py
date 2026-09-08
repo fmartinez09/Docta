@@ -121,6 +121,16 @@ class CourseMembership(Base):
     )
 
 
+class CourseCreation(Base):
+    __tablename__ = "course_creations"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
+
+
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (UniqueConstraint("course_id", "id", name="uq_documents_course_id_id"),)
@@ -270,6 +280,7 @@ class Chunk(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("corpus_version_id", "ordinal", name="uq_chunks_corpus_ordinal"),
+        UniqueConstraint("course_id", "corpus_version_id", "id", name="uq_chunks_scope"),
         CheckConstraint("page_start > 0", name="ck_chunks_page_start"),
         CheckConstraint("page_end >= page_start", name="ck_chunks_page_range"),
         Index("ix_chunks_search_vector", "search_vector", postgresql_using="gin"),

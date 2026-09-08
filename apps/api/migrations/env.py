@@ -3,6 +3,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from docta_api import conversation_models  # noqa: F401
 from docta_api.config import get_settings
 from docta_api.models import Base
 

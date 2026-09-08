@@ -1,3 +1,4 @@
+import os
 import re
 from uuid import uuid4
 
@@ -18,6 +19,9 @@ def anyio_backend() -> str:
 @pytest.fixture(scope="session")
 def integration_resources():
     """Only the dedicated Compose test services; never derive destructive targets from .env."""
+    storage_port = int(os.environ.get("DOCTA_TEST_MINIO_PORT", "59000"))
+    assert 1024 <= storage_port <= 65535
+    storage_endpoint = f"http://127.0.0.1:{storage_port}"
     suffix = uuid4().hex
     database = f"docta_test_{suffix}"
     bucket = f"docta-test-{suffix}"
@@ -28,8 +32,8 @@ def integration_resources():
     values = {
         "DOCTA_ENVIRONMENT": "test",
         "DOCTA_DATABASE_URL": admin_url.removesuffix("postgres") + database,
-        "DOCTA_MINIO_HEALTH_URL": "http://127.0.0.1:59000/minio/health/ready",
-        "DOCTA_S3_ENDPOINT_URL": "http://127.0.0.1:59000",
+        "DOCTA_MINIO_HEALTH_URL": f"{storage_endpoint}/minio/health/ready",
+        "DOCTA_S3_ENDPOINT_URL": storage_endpoint,
         "DOCTA_S3_ACCESS_KEY": "docta-test",
         "DOCTA_S3_SECRET_KEY": "docta-test-secret",
         "DOCTA_S3_BUCKET": bucket,

@@ -7,7 +7,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from anyio import to_thread
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -21,7 +21,7 @@ from docta_api.identity import (
     IdentityProvider,
     IdentityProviderUnavailable,
 )
-from docta_api.models import Course, CourseMembership, MembershipRole, User
+from docta_api.models import Course, CourseCreation, CourseMembership, MembershipRole, User
 
 logger = logging.getLogger("docta.course")
 router = APIRouter(prefix="/api/v1/courses", tags=["courses"])
@@ -66,7 +66,11 @@ class CourseService:
     def __init__(self, database: Database) -> None:
         self._database = database
 
-    def create_course(self, identity: AuthenticatedIdentity, title: str) -> CourseView:
+    def create_course(
+        self, identity: AuthenticatedIdentity, title: str, idempotency_key: str | None = None
+    ) -> CourseView:
+        if idempotency_key is not None and not (0 < len(idempotency_key.strip()) <= 255):
+            raise APIError(400, "idempotency_key_required", "A valid Idempotency-Key is required.")
         with self._database.session() as session:
             proposed_user_id = uuid4()
             inserted_user_id = session.scalar(
@@ -88,6 +92,42 @@ class CourseService:
             if user_id is None:
                 raise RuntimeError("identity persistence invariant failed")
 
+            if idempotency_key is not None:
+                idempotency_key = idempotency_key.strip()
+                session.scalar(select(User.id).where(User.id == user_id).with_for_update())
+                previous = session.scalar(
+                    select(Course)
+                    .join(
+                        CourseCreation,
+                        CourseCreation.course_id == Course.id,
+                    )
+                    .where(
+                        CourseCreation.user_id == user_id,
+                        CourseCreation.idempotency_key == idempotency_key,
+                    )
+                )
+                if previous is not None:
+                    role = session.scalar(
+                        select(CourseMembership.role).where(
+                            CourseMembership.course_id == previous.id,
+                            CourseMembership.user_id == user_id,
+                        )
+                    )
+                    if role != MembershipRole.TEACHER:
+                        raise APIError(404, "course_not_found", "The course was not found.")
+                    if previous.title != title:
+                        raise APIError(
+                            409, "idempotency_key_reused", "The key belongs to another request."
+                        )
+                    return CourseView(
+                        previous.id,
+                        previous.title,
+                        MembershipRole.TEACHER,
+                        previous.version,
+                        previous.active_corpus_version_id,
+                        previous.created_at,
+                    )
+
             course = Course(id=uuid4(), title=title)
             session.add(course)
             session.add(
@@ -98,6 +138,12 @@ class CourseService:
                 )
             )
             session.flush()
+            if idempotency_key is not None:
+                session.add(
+                    CourseCreation(
+                        user_id=user_id, idempotency_key=idempotency_key, course_id=course.id
+                    )
+                )
             return CourseView(
                 id=course.id,
                 title=course.title,
@@ -159,11 +205,14 @@ async def create_course(
     payload: CourseCreateRequest,
     request: Request,
     identity: RequiredIdentity,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> CourseResponse:
     started_at = perf_counter()
     service: CourseService = request.app.state.course_service
     try:
-        course = await to_thread.run_sync(service.create_course, identity, payload.title)
+        course = await to_thread.run_sync(
+            service.create_course, identity, payload.title, idempotency_key
+        )
     except SQLAlchemyError as error:
         _log(request, "course.create", "failed", started_at)
         raise APIError(

@@ -58,6 +58,31 @@ class Settings(BaseSettings):
     job_max_attempts: int = Field(default=3, ge=1, le=10)
     job_retry_base_seconds: float = Field(default=2, gt=0, le=60)
     job_reconcile_seconds: int = Field(default=30, ge=1, le=300)
+    tutor_endpoint_url: AnyHttpUrl | None = None
+    tutor_model: str | None = Field(default=None, min_length=1, max_length=255)
+    tutor_api_key: SecretStr | None = None
+    tutor_timeout_seconds: int = Field(default=45, ge=1, le=120)
+    tutor_max_output_tokens: int = Field(default=2000, ge=128, le=8000)
+    tutor_schema_profile: Literal["standard", "llama_cpp"] = "standard"
+    tutor_provider: Literal["chat_completions", "unsloth"] = "chat_completions"
+    message_timeout_seconds: int = Field(default=90, ge=5, le=180)
+
+    @model_validator(mode="after")
+    def validate_tutor_configuration(self) -> "Settings":
+        values = (self.tutor_endpoint_url, self.tutor_model, self.tutor_api_key)
+        if sum(value is not None for value in values) not in (0, 3):
+            raise ValueError("Tutor endpoint, model and API key must be configured together")
+        if self.tutor_api_key is not None and not self.tutor_api_key.get_secret_value().strip():
+            raise ValueError("Tutor API key must not be blank")
+        if self.tutor_timeout_seconds >= self.message_timeout_seconds:
+            raise ValueError("Tutor timeout must be shorter than message timeout")
+        if self.tutor_endpoint_url is not None:
+            url = self.tutor_endpoint_url
+            if url.username or url.password or url.query or url.fragment:
+                raise ValueError("Tutor endpoint must not contain credentials, query or fragment")
+            if self.environment == "production" and url.scheme != "https":
+                raise ValueError("Tutor endpoint requires HTTPS in production")
+        return self
 
     @model_validator(mode="after")
     def validate_redis_configuration(self) -> "Settings":
