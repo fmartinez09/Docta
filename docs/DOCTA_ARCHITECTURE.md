@@ -1,15 +1,21 @@
 # Docta — Arquitectura ejecutable
 
-**Versión:** 1.0  
-**Fecha:** 2026-09-03  
-**Estado:** fuente arquitectónica normativa para implementación  
+**Versión:** 1.1\
+**Fecha original:** 2026-09-03\
+**Revisión:** 2026-09-09\
+**Estado:** invariantes y arquitectura objetivo; implementación identificada por estado y ADR\
 **Sistema:** Docta  
 **Enfoque:** monolito modular, KITE y vertical slices
 
-**Actualización 2026-09-05:** [ADR 0001](adr/0001-ingestion-durability-and-response-delivery.md)
-resuelve la discrepancia de alcance: Redis Streams/outbox/worker se implementan como
-Incremento 2B antes del 3; SSE queda aceptado para el 3. LiteLLM es el candidato preferido,
-con despliegue, proveedor, modelo y costes pendientes de evaluación.
+**Estado vigente:** Fase 0 completada, incluida ingesta durable (2B), conversación/SSE (3)
+y workspace OIDC (4). [ADR 0004](adr/0004-phase-transition-and-evaluation-gates.md) establece
+la transición a [Fase 1](PHASE_1_TUTOR_QUALITY.md): evaluación primero y adopción de complejidad
+condicionada por resultados. El Incremento 5 todavía no está implementado.
+
+Este documento conserva diseños objetivo y antecedentes; no es un inventario de funcionalidades.
+Consultar [estado actual](CURRENT_STATE.md) para código y evidencia, y el [índice de ADR](adr/README.md)
+para decisiones específicas. Los diagramas, tipos y tablas conceptuales no implican nuevas tablas,
+endpoints o dependencias instaladas.
 
 ---
 
@@ -39,7 +45,7 @@ Antes de modificar el repositorio, Codex debe leer:
 
 1. `AGENTS.md` para las reglas de trabajo del repositorio.
 2. Este archivo para la arquitectura del sistema.
-3. `docs/WALKING_SKELETON.md` para el alcance y los criterios del incremento actual.
+3. `docs/PHASE_1_TUTOR_QUALITY.md` para el alcance y los criterios del incremento actual, y `docs/CURRENT_STATE.md` para el baseline implementado.
 4. Los ADR aceptados relacionados con el cambio.
 5. El estado real del repositorio y sus pruebas.
 
@@ -47,7 +53,9 @@ La relación entre estos documentos es:
 
 - `AGENTS.md` gobierna **cómo trabajar**.
 - Este archivo gobierna **qué sistema se está construyendo y cuáles son sus invariantes**.
-- `WALKING_SKELETON.md` gobierna **qué subconjunto se implementa ahora**.
+- `PHASE_1_TUTOR_QUALITY.md` gobierna **qué subconjunto se implementa ahora**.
+- `CURRENT_STATE.md` describe **qué está implementado y con qué evidencia**.
+- `WALKING_SKELETON.md` conserva **la especificación y evidencia histórica de Fase 0**.
 - Los ADR gobiernan **decisiones concretas ya aceptadas**.
 
 Si existe una contradicción:
@@ -61,6 +69,19 @@ Si existe una contradicción:
 ### 0.2 Regla de alcance
 
 La arquitectura objetivo no es una orden para construir todas sus capacidades inmediatamente. Cada tarea debe implementar el **vertical slice incompleto más pequeño** y conservar puertos para lo posterior sin desplegar infraestructura especulativa.
+
+### 0.3 Cómo distinguir diseño e implementación
+
+Las invariantes de aislamiento, durabilidad y procedencia siguen siendo normativas. Los ADR
+0001–0003 concretan su implementación y prevalecen sobre ejemplos anteriores de este documento.
+La sección 2 identifica decisiones vigentes; las secciones de diseños futuros deben leerse con
+los gates de Fase 1, no como una lista de dependencias que instalar.
+
+En particular, hoy existen PyMuPDF, chunks por página/caracteres, FTS top-5, el agregado `Message`,
+evidencia recuperada y citas, un adapter HTTP sin retries y un BFF con cookie cifrada. No existen
+parent-child, embeddings, `conversation_turns`, planner pedagógico, ledger, OpenUI ni la API
+completa de administración/feedback descrita como objetivo. El código exacto está enlazado en
+[CURRENT_STATE.md](CURRENT_STATE.md). El cierre técnico no acredita calidad pedagógica ni piloto.
 
 ---
 
@@ -94,39 +115,43 @@ Web, API y worker son procesos distintos, pero pertenecen a un solo producto, re
 
 ## 2. Estado de las decisiones
 
-Las siguientes decisiones son vinculantes salvo que un ADR posterior las reemplace.
+Las decisiones cerradas son vinculantes salvo que un ADR posterior las reemplace.
+«Experimental», «candidato» y «diferida» no autorizan adopción ni afirman implementación.
 
 | Área | Decisión actual | Estado | Implicación para Codex |
 | --- | --- | --- | --- |
 | Forma del sistema | Monolito modular con procesos web, API y worker | Cerrada | No crear microservicios ni contratos de red internos. |
 | Organización | KITE + vertical slices | Cerrada | Implementar comportamiento end-to-end, respetando módulos y dependencias. |
 | Web | Next.js + TypeScript | Cerrada | Mantener lógica de autorización definitiva en FastAPI. |
-| Estilos | Tailwind CSS | Cerrada | No incorporar otro sistema de estilos. |
-| Componentes | shadcn/ui | Cerrada | Extender componentes accesibles y propios. |
+| Estilos | CSS propio implementado; Tailwind como candidato posterior | Baseline vigente, ADR 0004 | No migrar el workspace solo para cumplir el diseño original. |
+| Componentes | Componentes React propios; shadcn/ui como candidato | Diferida, ADR 0004 | Introducir dependencias solo por necesidad del slice. |
 | Chat | assistant-ui adaptado al contrato SSE de Docta | Cerrada para UI del MVP | No adoptar un protocolo de proveedor como contrato de dominio. |
-| Tablas | shadcn Table; TanStack Table cuando existan filtros/paginación reales | Cerrada | No agregar TanStack de forma preventiva. |
-| Formularios | React Hook Form + Zod | Cerrada | Compartir semántica con OpenAPI, sin duplicar reglas de autorización. |
-| Iconos | Lucide | Cerrada | No introducir otra librería de iconos. |
-| Efecto visual | `metal-fx`, de forma selectiva | Cerrada | No convertirlo en dependencia estructural ni usarlo en toda la UI. |
+| Tablas | Componentes explícitos; shadcn/TanStack candidatos si se necesitan | Diferida | No agregar librerías de forma preventiva. |
+| Formularios | Formularios React actuales; React Hook Form + Zod candidatos | Diferida | API conserva validación y autorización definitivas. |
+| Iconos | Lucide como candidato | Diferida | No es una dependencia del baseline. |
+| Efecto visual | `metal-fx` como candidato | Diferida | No es requisito de calidad tutorial ni del piloto. |
 | Backend | FastAPI + Python | Cerrada | Pydantic en transporte; dominio sin FastAPI. |
 | Persistencia | PostgreSQL + FTS, compatible con pgvector | Cerrada | PostgreSQL es la fuente durable de verdad. |
 | Object storage | Puerto S3-compatible; MinIO es el primer adapter | Cerrada | El dominio no importa SDK del proveedor. |
 | Upload | Carga directa mediante URL firmada y confirmación posterior | Cerrada | La API no proxifica el PDF. |
-| Jobs | Redis Streams desde la ingesta asíncrona | Cerrada, decisión más reciente | No usar Redis Pub/Sub como cola ni dejar el adapter inline como solución final del incremento de ingesta. |
+| Jobs | Outbox PostgreSQL + Redis Streams, relay/consumer en worker | Implementada en 2B, ADR 0001 | No usar Redis Pub/Sub como cola ni fallback inline. |
 | Tiempo real | SSE para respuestas; Redis Pub/Sub solo después, si hay varias réplicas | Cerrada por fases | Pub/Sub será fan-out efímero, nunca estado durable. |
 | Identidad | Contrato OIDC/JWT mediante `IdentityProvider` | Cerrada | El dominio no depende de Cognito, Keycloak, Zitadel ni Authgear. |
-| Proveedor OIDC | Aún no cerrado | Pendiente de ADR | En Incremento 1 usar verificador estándar y adapter de prueba; no acoplarse a un vendor. |
+| Proveedor OIDC | ZITADEL local; proveedor de piloto aún no cerrado | Local documentado; producción pendiente | Preservar el verificador estándar y no acoplar el dominio al vendor. |
+| Sesión web | Next.js BFF, PKCE y cookie cifrada HttpOnly, sin refresh token | Implementada en 4, ADR 0003 | FastAPI vuelve a verificar JWT y autorización. |
 | Autorización | Membresías y permisos resueltos en Docta | Cerrada | Los roles del proveedor no reemplazan `CourseMembership`. |
 | Publicación | Versiones inmutables + puntero activo actualizado atómicamente | Cerrada | Nunca mutar un corpus publicado ni exponer builds parciales. |
-| Retrieval Phase 0 | PostgreSQL FTS real y aislado | Cerrada | Probar el flujo antes de optimizar. |
-| Retrieval MVP | FTS + dense pgvector + RRF | Cerrada por fase | Añadir dense/RRF detrás de `Retriever` cuando el skeleton esté verde. |
+| Retrieval baseline | PostgreSQL FTS español AND top-5 sobre pregunta original | Implementada en 3, ADR 0002 | Conservarla como baseline y sus validaciones de mensaje/scope. |
+| Retrieval híbrido | Comparar FTS, dense pgvector y RRF | Experimental en 7, ADR 0004 | Adoptar solo al superar gates; pgvector requiere infraestructura y migración explícitas. |
 | Reranker | Cross-encoder opcional y medido | Experimental | No convertirlo en dependencia obligatoria sin benchmark. |
-| Parser | PDF digital con procedencia de página; Docling preferido, fallback controlado | Cerrada con adapter sustituible | No añadir OCR silencioso. |
-| Modelos | Puertos `TutorModel` y `EmbeddingModel` | Cerrada | Proveedor y modelo concretos se configuran fuera del dominio. |
-| AI gateway | No obligatorio en Phase 0 | Pendiente por evidencia | LiteLLM/Bifrost son candidatos; no desplegar ambos ni decidir por accidente. |
+| Parser | PyMuPDF con procedencia de página | Implementada; Docling diferido por ADR 0004 | Cambiar parser/chunking requiere evaluación; no añadir OCR silencioso. |
+| Modelos | `TutorModel` implementado; `EmbeddingModel` previsto para 7 | Puerto de tutor vigente; embeddings pendientes | Proveedor/modelo fuera del dominio; Qwen local no implica selección de piloto. |
+| AI gateway | Adapter HTTP configurable, sin gateway desplegado | Pendiente por evidencia | LiteLLM/Bifrost son candidatos, no dependencias requeridas. |
 | Conversación | Guardar pregunta antes del modelo; confirmar respuesta o fallo después | Cerrada | La pérdida de conexión no puede borrar el intento. |
 | Salida | Resultado tipado, validado, persistido y luego expuesto | Cerrada | No emitir tokens crudos del proveedor. |
-| OpenUI | Posterior a contratos UI/SSE estables | Diferida | No introducirlo en Incrementos 0–4. |
+| Evaluación | Dataset revisado y harness offline sobre baseline | Próximo incremento: 5, pendiente | Separar retrieval, answerability, grounding, pedagogía y aprendizaje. |
+| Planner pedagógico | LearnerEvidence → PedagogicalDecision → RetrievalIntent | Diseño para 8, pendiente | Taxonomía pequeña, hipótesis explícitas y evaluación. |
+| OpenUI | Posterior a contrato pedagógico estable y necesidad de UI medida | Opcional en 14 | No bloquea piloto; nunca decide pedagogía ni ejecuta código arbitrario. |
 
 ### 2.1 Decisiones antiguas reemplazadas o aclaradas
 
@@ -139,12 +164,18 @@ Las siguientes decisiones son vinculantes salvo que un ADR posterior las reempla
 | Bifrost obligatorio desde el inicio | El puerto de modelo es obligatorio; el gateway desplegado no. LiteLLM/Bifrost requieren ADR y necesidad comprobada. |
 | S3 de AWS como único storage | El contrato es S3-compatible y MinIO es el adapter inicial. Producción debe preservar durabilidad y backups, sin acoplar el dominio a AWS. |
 | Streaming token por token | Rechazado en el MVP. SSE emite progreso y un resultado final ya validado. |
+| El walking skeleton como backlog activo | Fase 0 cerrada; Fase 1 y CURRENT_STATE separan próximos pasos de evidencia histórica (ADR 0004). |
+| pgvector + RRF obligatorios para piloto | Candidatos sujetos a evaluación; conservar FTS si no superan los gates (ADR 0004). |
+| Docling y librerías UI prescritos aunque no instalados | PyMuPDF y CSS propio/assistant-ui son el baseline; los candidatos no obligan a una migración (ADR 0004). |
 
 ---
 
 ## 3. Producto, actores y alcance
 
 ### 3.1 Actores
+
+Capacidades objetivo. Administración, enrollment y feedback no están implementados; hoy las
+conversaciones son privadas del miembro propietario, también si ese miembro es docente (ADR 0002).
 
 | Actor | Responsabilidad y capacidades |
 | --- | --- |
@@ -154,7 +185,7 @@ Las siguientes decisiones son vinculantes salvo que un ADR posterior las reempla
 | Proveedor OIDC | Autenticar al sujeto y emitir tokens verificables. No decide membresías de curso. |
 | Proveedor de modelo | Proponer una salida tipada a partir de contexto mínimo autorizado. No posee permisos, SQL, storage ni tools. |
 
-### 3.2 Resultado del walking skeleton
+### 3.2 Resultado alcanzado en Fase 0
 
 Un docente autorizado puede:
 
@@ -171,15 +202,15 @@ Un estudiante autorizado puede:
 4. recibir una intervención pedagógica validada con citas reales;
 5. recibir abstención o estado de fallo explícito cuando corresponda.
 
-### 3.3 Incluido en el MVP piloto
+### 3.3 Objetivo de piloto, sujeto a gates de Fase 1
 
 - aplicación web para estudiante, docente y administración mínima;
 - una o pocas asignaturas y un volumen acotado de cursos;
 - PDF con texto digital;
 - upload firmado, procesamiento asíncrono y estados observables;
 - versiones documentales/corpus inmutables;
-- PostgreSQL FTS y pgvector en la fase híbrida;
-- retrieval híbrido con RRF;
+- PostgreSQL FTS y, si supera evaluación, pgvector;
+- retrieval híbrido con RRF solo si mejora el baseline;
 - tutoría socrática con ayuda progresiva;
 - citas visibles con documento, página y fragmento;
 - historial durable;
@@ -187,7 +218,7 @@ Un estudiante autorizado puede:
 - cuotas, auditoría técnica y telemetría;
 - despliegue reproducible, backups y prueba de restauración.
 
-### 3.4 Fuera del walking skeleton
+### 3.4 Exclusiones y capacidades diferidas
 
 - OCR y PDF escaneados;
 - interpretación exhaustiva de fórmulas, tablas, diagramas o escritura manuscrita;
@@ -204,6 +235,8 @@ Un estudiante autorizado puede:
 - publicación/rollback con una UI editorial completa.
 
 Estos elementos pueden existir en el roadmap, pero no deben entrar incidentalmente a un incremento.
+OpenUI se contempla como opción del Incremento 14; las demás capacidades requieren promoción
+explícita de alcance. Ninguna es trabajo implícito del Incremento 5.
 
 ---
 
@@ -213,7 +246,7 @@ Estos elementos pueden existir en el roadmap, pero no deben entrar incidentalmen
 flowchart TD
     Users["Estudiantes, docentes y admin"] --> Web["Next.js web"]
     Web --> API["FastAPI modular monolith"]
-    API --> Data["PostgreSQL + pgvector"]
+    API --> Data["PostgreSQL + FTS; pgvector experimental"]
     API --> Storage["Object storage S3-compatible"]
     API --> External["OIDC y modelos externos"]
     API --> Redis["Redis Streams"]
@@ -237,10 +270,10 @@ flowchart TD
 
 | Proceso | Contiene | No contiene |
 | --- | --- | --- |
-| `web` | Next.js, rutas, componentes, sesión UI, proxy/BFF si se adopta, cliente SSE | Autorización definitiva, acceso SQL o claves de proveedores de IA |
+| `web` | Next.js, rutas, componentes, sesión cifrada, BFF y cliente SSE | Autorización definitiva, acceso SQL o claves de proveedores de IA |
 | `api` | HTTP, casos de uso, autorización, conversación, retrieval online, validación, persistencia | Parsing pesado dentro de requests, reglas exclusivas en handlers |
-| `worker` | Consumidores Redis Streams, parsing, chunking, embeddings, indexación, reintentos | Decisiones de membresía provenientes del mensaje, UI o permisos inferidos |
-| `outbox relay` | Publicación idempotente de outbox PostgreSQL a Streams | Lógica de negocio; puede vivir dentro de API/worker inicialmente |
+| `worker` | Consumidores Redis Streams, parsing, chunking, indexación FTS, reintentos; embeddings solo si se adoptan | Decisiones de membresía provenientes del mensaje, UI o permisos inferidos |
+| `outbox relay` | Publicación idempotente de outbox PostgreSQL a Streams; vive en el worker | Lógica de negocio; no requiere otro servicio |
 
 ---
 
@@ -421,7 +454,10 @@ El adapter de test debe crear identidades deterministas sin red. Debe estar habi
 
 ### 6.3 Flujo OIDC
 
-Se usará Authorization Code + PKCE. Los tokens no se almacenan en `localStorage`. La forma exacta de sesión del frontend puede resolverse con un BFF/cookie segura o un adapter OIDC apropiado, pero FastAPI sigue verificando el access token en su límite.
+Se usa Authorization Code + PKCE. Los tokens no se almacenan en `localStorage`. ADR 0003 fija
+el BFF Next.js y la cookie AES-256-GCM, HttpOnly, SameSite=Lax y Secure en HTTPS; el token se
+utiliza del lado servidor y FastAPI lo verifica en su límite. La sesión dura como máximo una
+hora o la vida menor del JWT, sin refresh token. Cambiar este contrato requiere otro ADR.
 
 ```mermaid
 sequenceDiagram
@@ -451,6 +487,10 @@ sequenceDiagram
 Un usuario puede ser docente en un curso y estudiante en otro. El rol de curso pertenece a `CourseMembership`, no a un claim global.
 
 ### 6.5 Matriz mínima de permisos
+
+Matriz objetivo para capacidades futuras. No concede permisos implementados: ADR 0002 limita
+lectura y escritura de conversaciones a su propietario con membresía actual; no existe bypass
+administrativo ni acceso docente a historiales ajenos. Enrollment y administración están diferidos.
 
 | Acción | ADMIN | TEACHER del curso | STUDENT del curso | Sin membresía |
 | --- | ---: | ---: | ---: | ---: |
@@ -513,6 +553,11 @@ Row-Level Security puede añadirse como segunda barrera si la identidad de reque
 - Las claves de object storage no son IDs de dominio y nunca se exponen como autoridad.
 
 ### 7.2 Entidades principales
+
+Modelo conceptual objetivo. El esquema implementado usa `messages` como agregado pregunta/respuesta,
+`retrieved_evidence` y `citations` (ADR 0002); no crea `conversation_turns` ni `retrieval_runs`.
+Feedback, ledger, estado pedagógico y campos de embedding son futuros, no migraciones pendientes
+por el solo hecho de aparecer en esta tabla. Consultar modelos/migraciones desde CURRENT_STATE.
 
 | Entidad/tabla | Campos conceptuales y responsabilidad |
 | --- | --- |
@@ -750,6 +795,9 @@ Para mensajes pendientes abandonados se usa recuperación mediante `XAUTOCLAIM` 
 
 ### 9.5 Reintentos
 
+La ingesta implementa reintentos transitorios automáticos acotados y dead-letter durable.
+El reintento manual auditado descrito como objetivo abajo aún no tiene endpoint/UI; usar el runbook.
+
 - solo errores clasificados como transitorios;
 - backoff exponencial con jitter;
 - máximo de intentos configurable;
@@ -785,6 +833,10 @@ Nunca utilizar Pub/Sub para:
 
 ### 10.1 Pipeline
 
+Diagrama objetivo. El baseline implementado extrae páginas con PyMuPDF, construye chunks por
+caracteres/overlap dentro de cada página y genera FTS sobre contenido. Parent-child y embeddings
+no están implementados; se introducen solo tras su decisión y evaluación.
+
 ```mermaid
 flowchart TD
     Claim["Claim job"] --> Fetch["Fetch and validate PDF"]
@@ -801,13 +853,14 @@ Cada etapa registra versión, duración, resultado y diagnóstico seguro. Las et
 
 Estrategia:
 
-1. PDF digital únicamente en Phase 0.
+1. PDF digital únicamente; OCR sigue fuera del alcance activo.
 2. `DocumentParser` como puerto.
-3. Docling como adapter preferido para estructura/layout.
-4. PyMuPDF como fallback controlado para PDF digitales simples.
+3. PyMuPDF como adapter actual para PDF digitales con procedencia de página.
+4. Docling como candidato de estructura/layout si las limitaciones medidas justifican el cambio (ADR 0004).
 5. Nunca inventar contenido si falta texto.
 
-Artefactos mínimos:
+Artefactos objetivo de parsing enriquecido (hoy: texto normalizado por página, orden, hash de
+fragmento y versión del parser; jerarquía, bounding boxes y tipos de bloque siguen diferidos):
 
 - texto normalizado por bloque;
 - página inicial/final;
@@ -854,14 +907,14 @@ No activar por defecto hasta medir su efecto sobre retrieval, grounding, costo y
 
 ### 10.6 Índices
 
-Phase 0:
+Baseline implementado:
 
 - `tsvector` PostgreSQL;
-- campos/weights para título, encabezado y contenido;
+- `to_tsvector('spanish', content)` sobre contenido, sin pesos separados de título/encabezado;
 - búsqueda real filtrada por curso/corpus;
 - índices SQL apropiados.
 
-MVP híbrido:
+Candidato híbrido del Incremento 7, sujeto a ADR y evaluación:
 
 - embedding multilingüe mediante `EmbeddingModel`;
 - pgvector;
@@ -978,6 +1031,10 @@ RetrievalScope(
 
 ### 12.2 Preparación de consulta
 
+Diseño del Incremento 6, pendiente. Hoy se usa la pregunta persistida sin reescritura y el retriever
+verifica su igualdad exacta con `Message.question`. Separar consulta derivada de pregunta requiere
+refinar ADR 0002, conservando el vínculo autorizado al mensaje y su corpus capturado.
+
 Entradas posibles:
 
 - pregunta actual;
@@ -1078,6 +1135,9 @@ El tutor no elige la frase más útil en abstracto. Elige la **ayuda mínima suf
 La política no vive solo en un system prompt. Se representa mediante tipos, estado, validación y telemetría.
 
 ### 13.2 Pipeline pedagógico
+
+Diseño previsto para Incrementos 8–10. El runtime actual usa `TutorRequest`/`TutorDraft` y una
+política en prompt, sin estos tres contratos de planificación ni estado pedagógico persistente.
 
 ```mermaid
 flowchart TD
@@ -1197,7 +1257,10 @@ La representación pública puede omitir campos internos. El schema del modelo s
 - abstención tiene forma segura;
 - Markdown/HTML se sanitiza al renderizar.
 
-Puede existir un único intento acotado de reparación estructural. Si vuelve a fallar, el turno termina `FAILED` o con una abstención segura según la clase de error; nunca se persiste una respuesta inválida como completada.
+ADR 0002 no permite reparación ni retry automático del proveedor: salida inválida termina en
+fallo seguro. El Incremento 10 estudiará una segunda recuperación acotada, no una repetición
+automática del modelo ni reparación estructural. Cualquier política de reparación adicional
+necesita su propia decisión; nunca persistir una respuesta inválida como completada.
 
 ### 13.7 Abstención
 
@@ -1224,6 +1287,10 @@ No se debe responder desde memoria general del modelo como si la respuesta provi
 La conexión HTTP/SSE no es la fuente de verdad de una conversación.
 
 ### 14.2 Modelo de turno recomendado
+
+Concepto lógico; ADR 0002 lo implementa en una fila `Message` con pregunta, respuesta nullable
+y estado. Las transacciones siguientes describen responsabilidades, no una obligación de separar
+filas de usuario/asistente. El historial, la evidencia y las citas actuales ya son durables.
 
 Un `ConversationTurn` agrupa:
 
@@ -1298,7 +1365,8 @@ Nunca se incluye payload crudo del proveedor, token, prompt completo o stack tra
 
 SSE se utiliza para progreso y entrega asíncrona percibida. En el MVP no se exponen tokens sin validar.
 
-El servidor puede generar internamente mediante streaming del proveedor, pero acumula, valida y persiste la salida completa antes de emitirla como resultado pedagógico.
+El adapter actual desactiva streaming del proveedor (ADR 0002). Una futura variante que lo use
+internamente necesitaría acumular, validar y persistir toda la salida antes de exponerla.
 
 ### 15.2 Eventos permitidos
 
@@ -1365,7 +1433,13 @@ No permitir que los tipos internos de `assistant-ui` definan el contrato HTTP o 
 - campos aditivos compatibles; cambios semánticos requieren versión/migración;
 - no usar headers de identidad de desarrollo en producción.
 
-### 16.2 Endpoints mínimos
+### 16.2 Mapa de API objetivo
+
+La tabla conserva rutas conceptuales del diseño original, no el catálogo desplegado. Las rutas
+vigentes están en el [README](../README.md) y los runbooks. En particular, la activación real es
+`POST /api/v1/courses/{course_id}/corpus/activate` y la reconciliación es
+`GET /api/v1/conversations/{conversation_id}/messages/{message_id}`. No existen todavía endpoints
+de memberships, retry manual, construcción editorial de corpus ni feedback de esta tabla.
 
 | Método y ruta | Uso | Garantía crítica |
 | --- | --- | --- |
@@ -1386,9 +1460,13 @@ No permitir que los tipos internos de `assistant-ui` definan el contrato HTTP o 
 | `GET /api/v1/conversations/{conversation_id}/turns/{turn_id}` | reconciliar estado | fuente durable para reconexión |
 | `POST /api/v1/messages/{message_id}/feedback` | feedback | actor autorizado y una semántica definida |
 
-La ruta de mensajes puede negociar JSON o `text/event-stream`. Ambos transportes deben representar el mismo caso de uso y estado terminal.
+La implementación de ADRs 0001–0002 usa `text/event-stream` para el POST de mensajes; las
+consultas de historial/estado usan JSON. No hay negociación JSON de la generación actual.
 
 ### 16.3 Errores
+
+Forma y códigos conceptuales del diseño original. No copiar como contrato del cliente: usar
+los errores reales del API y el [runbook de conversación](runbooks/conversations.md).
 
 ```json
 {
@@ -1436,6 +1514,10 @@ No usar diferencias de error que permitan enumerar recursos de otro curso.
 
 ### 17.1 Stack
 
+Next.js/TypeScript y assistant-ui están implementados con CSS y formularios React propios.
+Las demás entradas son candidatos del diseño inicial, diferidos por ADR 0004; no representan
+dependencias instaladas ni tareas de migración obligatorias.
+
 | Capa | Elección |
 | --- | --- |
 | Aplicación | Next.js + TypeScript |
@@ -1479,7 +1561,7 @@ No usar diferencias de error que permitan enumerar recursos de otro curso.
 ### 17.3 Reglas de UI
 
 - ocultar un botón no es autorización;
-- validar UX con Zod, pero tratar el backend como autoridad;
+- validar UX con los mecanismos del frontend; Zod es un candidato, el backend sigue siendo autoridad;
 - representar estados del servidor, no inventar éxito optimista para publicación/ingesta;
 - mantener `course_id`, `conversation_id`, `turn_id` y `trace_id` correlacionables;
 - citas se abren usando metadatos autorizados o una URL de lectura de vida corta;
@@ -1498,7 +1580,9 @@ OpenUI se evaluará cuando:
 - la autorización y los casos de uso sigan fuera del LLM;
 - exista evaluación de accesibilidad, predictibilidad y fallos.
 
-No pertenece al walking skeleton ni al Incremento 1. La UI actual debe ser explícita y tipada.
+OpenUI es opcional en el Incremento 14; no es requisito del piloto. La UI actual es explícita y
+tipada. `TutorResponse → InteractionSpec validado → componentes permitidos` mantiene la decisión
+pedagógica en Docta y prohíbe ejecutar React/JavaScript arbitrario generado por el modelo.
 
 ---
 
@@ -1517,14 +1601,14 @@ class EmbeddingModel(Protocol):
 
 Los requests internos usan tipos de Docta, no tipos del SDK.
 
-### 18.2 Phase 0
+### 18.2 Baseline implementado en Fase 0
 
 - fake determinista en tests;
-- un adapter configurado en runtime cuando se integre generación real;
+- un adapter HTTP configurable en runtime, sin proveedor/modelo por defecto;
 - timeouts explícitos;
-- reintentos muy acotados solo para fallos transitorios;
+- sin retries automáticos de modelo (ADR 0002); los reintentos de ingesta tienen otro contrato;
 - límites de tokens y contexto;
-- registro de versión, latencia, tokens y resultado;
+- registro de versión, latencia y resultado; medición de uso/coste por evaluación y ledger siguen pendientes;
 - credenciales solo backend;
 - sin red/APIs pagadas en pruebas automatizadas.
 
@@ -1723,7 +1807,10 @@ No inferir aprendizaje causal desde uso, satisfacción o “respuesta útil”.
 
 ### 20.6 Herramientas
 
-OpenTelemetry es el contrato de instrumentación. Phoenix puede utilizarse para trazas/evaluación LLM y un stack Prometheus/Grafana o proveedor equivalente para operación, evitando duplicación innecesaria. La elección de backend no debe contaminar los módulos de dominio.
+El baseline emite logs estructurados. OpenTelemetry se conserva como contrato objetivo de
+instrumentación, todavía sin implementar. Phoenix y Prometheus/Grafana son opciones de backend,
+no infraestructura instalada ni requisito del harness local. La adopción responde al slice y
+su riesgo medido; la elección de backend no debe contaminar el dominio.
 
 ---
 
@@ -1743,6 +1830,9 @@ OpenTelemetry es el contrato de instrumentación. Phoenix puede utilizarse para 
 | Resultado educativo | ¿Cambió el aprendizaje? Requiere un estudio, no solo telemetría. |
 
 ### 21.2 Dataset dorado
+
+Pendiente de implementación. [Fase 1, Incremento 5](PHASE_1_TUTOR_QUALITY.md#incremento-5--evaluation-harness--dataset-v0)
+concreta schema, revisión humana, splits, reproducibilidad y criterios de aceptación de este diseño.
 
 Cada caso debe conservar:
 
@@ -1891,6 +1981,10 @@ No reemplaza etiquetas humanas ni prueba aprendizaje.
 
 ### 23.1 Desarrollo local
 
+Hoy Compose ejecuta PostgreSQL `16.10-alpine` (sin pgvector), Redis, MinIO y opcionalmente worker.
+Web/API se inician con los comandos del README. El siguiente listado es objetivo, no estado
+desplegado; añadir pgvector en 7 exige una imagen compatible, migración y pruebas explícitas.
+
 Docker Compose debe proveer, cuando el incremento lo necesite:
 
 - PostgreSQL con extensión pgvector disponible;
@@ -2000,11 +2094,15 @@ El timeout del navegador no cancela ni revierte automáticamente el estado durab
 - sin Redis: uploads pueden confirmarse/outbox permanecer pendiente, pero no fingir procesamiento;
 - sin storage: no crear confirmación falsa;
 - sin corpus: no responder con memoria general;
-- salida inválida: reparar una vez o fallar/abstenerse.
+- salida inválida: fallo seguro sin reparación automática, según ADR 0002.
 
 ---
 
 ## 25. CI/CD y disciplina de entrega
+
+Objetivos de automatización y despliegue. El repositorio inspeccionado no contiene workflows
+en `.github`; los comandos locales están en el README. Esta sección no acredita CI/CD,
+escaneo automatizado, staging ni producción ya configurados.
 
 ### 25.1 Pull request
 
@@ -2053,6 +2151,13 @@ El timeout del navegador no cancela ni revierte automáticamente el estado durab
 
 ## 26. Roadmap por vertical slices
 
+### Estado y fuente de planificación
+
+Los incrementos 0–4/2B están completados. Se conserva abajo su descomposición histórica;
+la evidencia de cierre está en [WALKING_SKELETON.md](WALKING_SKELETON.md). El backlog activo
+es [PHASE_1_TUTOR_QUALITY.md](PHASE_1_TUTOR_QUALITY.md), empezando por 5: harness y dataset.
+Las listas posteriores de piloto/mejoras son antecedentes de diseño, sujetos a ese plan y ADR 0004.
+
 ### Incremento 0 — baseline ejecutable
 
 - monorepo/estructura existente respetada;
@@ -2080,9 +2185,9 @@ Redis puede estar presente en infraestructura desde este punto, pero no requiere
 
 ### Incrementos 2 y 2B — upload, ingesta y publicación durable
 
-El incremento 2 existente usa ingesta inline. ADR 0001 asigna outbox, Redis Streams,
-worker, recuperación y reintentos al incremento 2B; no se consideran implementados
-por estar descritos aquí.
+El incremento 2 original usaba ingesta inline. Incremento 2B implementó outbox, Redis Streams,
+worker, recuperación y reintentos según ADR 0001. Sus pruebas y runbook están registrados
+en el historial de Fase 0; el runtime ya no usa despacho inline.
 
 - presigned PUT;
 - confirmación y validación;
@@ -2119,10 +2224,10 @@ por estar descritos aquí.
 - assistant-ui adaptado;
 - E2E con API/PostgreSQL/Redis/MinIO reales y proveedores falsos deterministas donde aplique.
 
-### Endurecimiento del piloto
+### Antecedentes de endurecimiento del piloto
 
 - proveedor OIDC seleccionado por ADR;
-- dense pgvector + RRF;
+- evaluación de dense pgvector + RRF; adopción condicionada, no requisito de piloto;
 - modelo/embedding elegidos mediante evaluación;
 - KITE pedagógico más rico;
 - safety input/output y PII;
@@ -2132,7 +2237,7 @@ por estar descritos aquí.
 - threat model y runbooks;
 - feedback e indicadores básicos.
 
-### Mejoras guiadas por evidencia
+### Antecedentes de mejoras guiadas por evidencia
 
 - reranker;
 - contextual enrichment;
@@ -2181,7 +2286,7 @@ Estas preguntas requieren ADR o decisión de producto antes de la fase que las u
 ### Identidad y privacidad
 
 - proveedor OIDC: Keycloak, Zitadel, Authgear, Cognito u otro compatible;
-- estrategia exacta de sesión web/BFF;
+- eventual evolución de la sesión web/BFF ya implementada en ADR 0003, si aparecen límites medidos;
 - retención, exportación y eliminación;
 - consentimiento y términos;
 - licencias de material.
@@ -2210,7 +2315,11 @@ Estas preguntas requieren ADR o decisión de producto antes de la fase que las u
 
 ---
 
-## 29. ADR que deben existir
+## 29. Registro y futuras decisiones
+
+El [índice de ADR](adr/README.md) registra decisiones 0001–0004 con su estado actual. Las áreas
+de la lista siguiente pueden estar cubiertas conjuntamente por un ADR; no son doce documentos
+faltantes. Las futuras decisiones se redactan al concretar el slice correspondiente.
 
 Como mínimo, el repositorio debe terminar documentando:
 

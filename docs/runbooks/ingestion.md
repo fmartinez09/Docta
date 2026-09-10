@@ -1,4 +1,8 @@
-# Ingestion operations — Increment 2B
+# Ingestion operations
+
+Current ingestion contract, introduced in Increment 2B and retained after Phase 0 closure.
+See [ADR 0001](../adr/0001-ingestion-durability-and-response-delivery.md) and the
+[current-state inventory](../CURRENT_STATE.md). The recovery procedures below remain active.
 
 ## Process and transaction boundaries
 

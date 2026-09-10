@@ -1,8 +1,24 @@
 # Docta walking skeleton
 
-Status: implementation specification  
-Scope: Phase 0  
+Status: completed — historical implementation specification and acceptance evidence\
+Scope: Phase 0, Increments 0–4 including 2B\
 Primary risk under test: Docta can produce a course-isolated, grounded and auditable pedagogical answer from one digital PDF.
+
+## Closure note — 2026-09-09
+
+Phase 0 is complete and merged into `develop` at `e31d1aa`. The specification and checklists
+below are retained as the historical record. Their conceptual names and examples are refined
+by ADRs 0001–0003; they are not a replacement for the current API contract.
+
+Active scope now lives in [Phase 1](PHASE_1_TUTOR_QUALITY.md), starting with Increment 5.
+See [current state](CURRENT_STATE.md) for implemented behavior and remaining limits, and
+[ADR 0004](adr/0004-phase-transition-and-evaluation-gates.md) for the transition decision.
+Do not add Phase 1 backlog here or rewrite dated results as if they were new verification.
+
+The later 2026-09-08 [prompt-v2 verification](runbooks/conversations.md) records 118 Python tests
+including browser, ten web tests, Ruff and ESLint after the initial Increment 4 checks below.
+Those are successive historical runs. This documentary closure does not assert a new test run,
+pedagogical benchmark, production-browser model validation or pilot readiness.
 
 ## 1. Outcome
 
@@ -258,4 +274,5 @@ The walking skeleton is done only when all statements are reproducibly true.
 - RAG evaluation datasets, RAGAS-like metrics and pedagogical pilot design.
 - Model gateway, provider fallback, rate limits and cost controls.
 
-Promote a deferred item only when the current skeleton is green and the next experiment or product risk requires it.
+At Phase 0 closure these items were deferred. Their current priority and adoption gates now
+belong to [Phase 1](PHASE_1_TUTOR_QUALITY.md); this historical list is no longer the active backlog.

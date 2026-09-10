@@ -1,7 +1,7 @@
 # Docta
 
-Docta is being built as a trustworthy pedagogical RAG tutor. This repository currently contains
-Increments 0 through 4 of the [walking skeleton](docs/WALKING_SKELETON.md): an executable Next.js
+Docta is being built as a trustworthy pedagogical RAG tutor. Phase 0 is complete, covering
+Increments 0 through 4 (including 2B) of the [walking skeleton](docs/WALKING_SKELETON.md): an executable Next.js
 web app, a FastAPI boundary, PostgreSQL/MinIO infrastructure, OIDC authentication, course-scoped
 membership, direct PDF upload, page-aware ingestion, PostgreSQL FTS and atomic corpus activation.
 Ingestion runs in a separate worker through a PostgreSQL outbox and Redis Streams, with
@@ -11,6 +11,12 @@ The API delivers lifecycle events and a validated persisted result over SSE, wit
 idempotent retries and explicit failure recovery. The teacher/student workspace now includes
 OIDC login, PDF publication, durable chat, citation fragments and visible failures/abstention.
 See the [step-by-step browser runbook](docs/runbooks/browser-workspace.md).
+
+The active plan is [Phase 1 — Tutor Quality, Retrieval and Evaluation](docs/PHASE_1_TUTOR_QUALITY.md).
+The next implementation slice is **Increment 5: evaluation harness and reviewed dataset v0**;
+it is not implemented yet. Phase 0 remains the historical technical proof, not the current backlog
+or a claim of pilot readiness. Start with the [documentation index](docs/README.md),
+[implemented-state inventory](docs/CURRENT_STATE.md) and [ADR index](docs/adr/README.md).
 
 ## Prerequisites
 
@@ -205,4 +211,8 @@ that a worker is healthy. Worker failures are visible in structured logs and dat
 [ADR 0002](docs/adr/0002-durable-conversation-and-scoped-rag.md) records conversation semantics.
 The real HTTP adapter is configurable; concrete provider/model selection and live pedagogical
 evaluation remain open. Automated tests use deterministic model fakes and HTTP transport doubles.
-OCR, vector retrieval, gateway deployment and student/teacher UI remain outside this increment.
+The student/teacher UI is implemented, including OIDC/PKCE, publication, durable chat and citation
+fragments; [ADR 0003](docs/adr/0003-browser-workspace-and-oidc-session.md) records its contract.
+There is no evaluation harness, conversational query resolution, vector retrieval or structured
+pedagogical planner yet. Hybrid retrieval and richer tutoring are gated Phase 1 work; OCR and
+gateway deployment remain deferred. Existing model smoke tests do not establish pedagogical quality.

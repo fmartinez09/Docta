@@ -1,7 +1,12 @@
 # Conversation and RAG operations
 
-Increment 3 runs inside the FastAPI process. PostgreSQL owns questions, outcomes and evidence;
+Conversation execution, introduced in Increment 3, runs inside the FastAPI process.
+PostgreSQL owns questions, outcomes and evidence;
 Redis remains responsible only for document ingestion. See [ADR 0002](../adr/0002-durable-conversation-and-scoped-rag.md).
+
+This remains the current operational contract after Phase 0 closure. The browser workspace is
+implemented in Increment 4; see its [runbook](browser-workspace.md). Quality work is planned in
+[Phase 1](../PHASE_1_TUTOR_QUALITY.md); future resolution/planner modes are not runtime capabilities yet.
 
 ## Start and configure
 
@@ -161,12 +166,17 @@ uv run --cache-dir .uv-cache pytest tests/integration/test_conversations.py
 Integration resources are generated and isolated by the existing test fixture. They never target
 the development database. The full suite additionally rebuilds migrations and restarts dependencies.
 
-Before a student pilot, select/configure a real model, run a deliberate live smoke test, and evaluate
-its factual support, abstention and pedagogical quality. Exact citation checks cannot prove semantic
-entailment of every sentence. This increment adds no UI; the next slice is the minimal student and
-teacher interface from Increment 4.
+Before a student pilot, select the model through a reviewed benchmark and verify the complete
+browser deployment with its real identity/model configuration. The local smoke tests and prompt
+diagnostics recorded above establish compatibility on a small sample, not that acceptance gate.
+Exact citation checks cannot prove semantic entailment of every sentence. The Increment 4 UI is
+implemented; the next slice is the evaluation harness and reviewed dataset in
+[Phase 1](../PHASE_1_TUTOR_QUALITY.md).
 
 ## Implementation verification — 2026-09-07
+
+Historical Increment 3 handoff. Statements about that session's migrations and lack of live
+requests apply to 2026-09-07; subsequent 2026-09-08 checks are recorded above and in Phase 0.
 
 Verified commands/results in this workspace:
 

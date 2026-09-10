@@ -1,5 +1,10 @@
 # Prueba completa de la interfaz
 
+Runbook vigente del workspace implementado en el Incremento 4. La Fase 0 está cerrada;
+el siguiente trabajo es [evaluación de calidad en Fase 1](../PHASE_1_TUTOR_QUALITY.md).
+El registro local fechado a continuación es histórico; comprobar procesos y configuración
+antes de reutilizarlo, sin asumir que siguen activos.
+
 Estado local verificado el 2026-09-08: web en `http://127.0.0.1:3100`, API en el puerto 8000,
 worker activo y base migrada hasta 0008. ZITADEL está iniciado y el flujo de Docta llega a su
 pantalla de acceso. Unsloth pasó una prueba sintética con una cita válida usando el perfil
