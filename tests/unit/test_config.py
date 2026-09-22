@@ -21,6 +21,10 @@ def test_settings_accept_local_postgres_and_minio_urls() -> None:
         ("database_url", "sqlite:///docta.db"),
         ("minio_health_url", "ftp://localhost/health"),
         ("dependency_timeout_seconds", 0),
+        ("redis_url", "https://localhost:6379"),
+        ("job_lease_seconds", 0),
+        ("job_max_attempts", 0),
+        ("job_retry_base_seconds", 0),
     ],
 )
 def test_settings_fail_closed_for_invalid_dependency_config(field: str, value: object) -> None:
@@ -102,4 +106,33 @@ def test_chunk_overlap_must_be_smaller_than_chunk_size() -> None:
             minio_health_url="http://localhost:9000/minio/health/ready",
             chunk_size_characters=400,
             chunk_overlap_characters=400,
+        )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"tutor_model": "configured-model"},
+        {"tutor_endpoint_url": "https://model.test/v1/chat/completions"},
+        {"tutor_timeout_seconds": 90},
+        {"tutor_max_output_tokens": 0},
+        {
+            "tutor_model": "model",
+            "tutor_api_key": " ",
+            "tutor_endpoint_url": "https://model.test/v1/chat/completions",
+        },
+        {
+            "tutor_model": "model",
+            "tutor_api_key": "test-key",
+            "tutor_endpoint_url": "https://model.test/v1/chat/completions?token=secret",
+        },
+    ],
+)
+def test_tutor_configuration_fails_closed(values):
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://docta:secret@localhost:5432/docta",
+            minio_health_url="http://localhost:9000/health",
+            **values,
         )

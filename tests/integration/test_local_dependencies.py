@@ -23,7 +23,7 @@ def test_migrations_rebuild_database_to_current_revision() -> None:
     with psycopg.connect(str(settings.database_url)) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
 
-    assert revision == ("20260903_0005",)
+    assert revision == ("20260907_0008",)
 
 
 @pytest.mark.anyio

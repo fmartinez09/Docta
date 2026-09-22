@@ -18,7 +18,7 @@ from docta_api.api_errors import APIError
 from docta_api.courses import RequiredIdentity
 from docta_api.database import Database
 from docta_api.identity import AuthenticatedIdentity
-from docta_api.ingestion import JobDispatcher
+from docta_api.jobs import JobDispatcher
 from docta_api.models import (
     CorpusVersion,
     CorpusVersionDocument,
@@ -290,8 +290,6 @@ class DocumentService:
             request_hash=request_hash,
         )
         if existing_job is not None:
-            if existing_job[1] == IngestionJobState.PENDING:
-                self._job_dispatcher.dispatch(existing_job[0], correlation_id)
             return self.get_version(identity, course_id, document_id, version_id)
 
         record = self._load_upload(identity, course_id, document_id, version_id)
@@ -333,19 +331,18 @@ class DocumentService:
                 version.storage_version_id = metadata.version_id
                 version.state = DocumentVersionState.QUEUED.value
                 version.updated_at = datetime.now(UTC)
-                session.add(
-                    IngestionJob(
-                        id=job_id,
-                        course_id=course_id,
-                        document_version_id=version.id,
-                        job_type="ingestion",
-                        pipeline_version=version.pipeline_version,
-                        state=IngestionJobState.PENDING.value,
-                        correlation_id=correlation_id,
-                    )
+                job = IngestionJob(
+                    id=job_id,
+                    course_id=course_id,
+                    document_version_id=version.id,
+                    job_type="ingestion",
+                    pipeline_version=version.pipeline_version,
+                    state=IngestionJobState.PENDING.value,
+                    correlation_id=correlation_id,
                 )
+                session.add(job)
+                self._job_dispatcher.dispatch(session, job)
 
-        self._job_dispatcher.dispatch(job_id, correlation_id)
         return self.get_version(identity, course_id, document_id, version_id)
 
     def get_version(

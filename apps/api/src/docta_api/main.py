@@ -10,10 +10,12 @@ from pydantic import BaseModel
 
 from docta_api.api_errors import APIError
 from docta_api.config import Settings, get_settings
+from docta_api.conversation_routes import router as conversations_router
+from docta_api.conversation_runtime import ConversationRuntime
+from docta_api.conversations import ConversationService
 from docta_api.courses import CourseService
 from docta_api.courses import router as courses_router
 from docta_api.database import Database
-from docta_api.document_parser import DocumentParser
 from docta_api.documents import DocumentService
 from docta_api.documents import router as documents_router
 from docta_api.health import MinioProbe, PostgresProbe, ReadinessProbes
@@ -22,10 +24,14 @@ from docta_api.identity import (
     OIDCJWTIdentityProvider,
     UnconfiguredIdentityProvider,
 )
-from docta_api.ingestion import IngestionWorker, InlineJobDispatcher, JobDispatcher
+from docta_api.jobs import JobDispatcher, OutboxJobDispatcher
 from docta_api.object_storage import ObjectStorage, UnconfiguredObjectStorage
-from docta_api.pymupdf_parser import PyMuPDFDocumentParser
+from docta_api.postgres_retriever import PostgresRetriever
+from docta_api.rag import EvidenceResponseValidator, Retriever, TutorModel
 from docta_api.s3_object_storage import S3ObjectStorage
+from docta_api.tutor_http import ChatCompletionsTutorModel, UnconfiguredTutorModel
+from docta_api.workspace import WorkspaceService
+from docta_api.workspace import router as workspace_router
 
 
 class LiveResponse(BaseModel):
@@ -88,6 +94,20 @@ def _default_object_storage(settings: Settings) -> ObjectStorage:
     )
 
 
+def _default_tutor_model(settings: Settings) -> TutorModel:
+    if settings.tutor_endpoint_url is None:
+        return UnconfiguredTutorModel()
+    assert settings.tutor_model is not None and settings.tutor_api_key is not None
+    return ChatCompletionsTutorModel(
+        endpoint=str(settings.tutor_endpoint_url), model=settings.tutor_model,
+        api_key=settings.tutor_api_key.get_secret_value(),
+        timeout_seconds=settings.tutor_timeout_seconds,
+        max_output_tokens=settings.tutor_max_output_tokens,
+        schema_profile=settings.tutor_schema_profile,
+        provider=settings.tutor_provider,
+    )
+
+
 def create_app(
     settings: Settings | None = None,
     probes: ReadinessProbes | None = None,
@@ -95,12 +115,14 @@ def create_app(
     course_service: CourseService | None = None,
     document_service: DocumentService | None = None,
     object_storage: ObjectStorage | None = None,
-    document_parser: DocumentParser | None = None,
     job_dispatcher: JobDispatcher | None = None,
+    conversation_service: ConversationService | None = None,
+    tutor_model: TutorModel | None = None,
+    retriever: Retriever | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     database: Database | None = None
-    if course_service is None or document_service is None:
+    if course_service is None or document_service is None or conversation_service is None:
         database = Database(str(resolved_settings.database_url))
     if course_service is None:
         assert database is not None
@@ -110,20 +132,7 @@ def create_app(
     if document_service is None:
         assert database is not None
         resolved_object_storage = object_storage or _default_object_storage(resolved_settings)
-        parser = document_parser or PyMuPDFDocumentParser(
-            max_pages=resolved_settings.max_document_pages
-        )
-        dispatcher = job_dispatcher
-        if dispatcher is None:
-            worker = IngestionWorker(
-                database=database,
-                object_storage=resolved_object_storage,
-                parser=parser,
-                max_document_bytes=resolved_settings.max_document_bytes,
-                chunk_size_characters=resolved_settings.chunk_size_characters,
-                chunk_overlap_characters=resolved_settings.chunk_overlap_characters,
-            )
-            dispatcher = InlineJobDispatcher(worker)
+        dispatcher = job_dispatcher or OutboxJobDispatcher()
         resolved_document_service = DocumentService(
             database=database,
             object_storage=resolved_object_storage,
@@ -135,6 +144,18 @@ def create_app(
     else:
         resolved_document_service = document_service
 
+    resolved_model = tutor_model or _default_tutor_model(resolved_settings)
+    if conversation_service is None:
+        assert database is not None
+        conversation_service = ConversationService(
+            database, model_version=resolved_model.version,
+            message_timeout_seconds=resolved_settings.message_timeout_seconds,
+        )
+    conversation_runtime = ConversationRuntime(
+        conversation_service, retriever or PostgresRetriever(conversation_service.database),
+        resolved_model, EvidenceResponseValidator(),
+    )
+
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         application.state.settings = resolved_settings
@@ -144,15 +165,21 @@ def create_app(
         )
         application.state.course_service = resolved_course_service
         application.state.document_service = resolved_document_service
+        application.state.conversation_runtime = conversation_runtime
+        application.state.workspace_service = WorkspaceService(conversation_service.database)
+        conversation_runtime.start_recovery()
         try:
             yield
         finally:
+            await conversation_runtime.close()
             if database is not None:
                 database.close()
 
     application = FastAPI(title="Docta API", version="0.1.0", lifespan=lifespan)
     application.include_router(courses_router)
     application.include_router(documents_router)
+    application.include_router(conversations_router)
+    application.include_router(workspace_router)
 
     @application.exception_handler(APIError)
     async def api_error_handler(request: Request, error: APIError) -> JSONResponse:
@@ -185,7 +212,18 @@ def create_app(
         request: Request,
         call_next: Callable[[Request], Awaitable[Any]],
     ):
-        request_id = request.headers.get("x-request-id") or str(uuid4())
+        supplied_id = request.headers.get("x-request-id", "")
+        request_id = (
+            supplied_id
+            if (
+                0 < len(supplied_id) <= 100
+                and all(
+                    character.isascii() and (character.isalnum() or character in "-_.")
+                    for character in supplied_id
+                )
+            )
+            else str(uuid4())
+        )
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers["x-request-id"] = request_id

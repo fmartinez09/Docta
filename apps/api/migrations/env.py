@@ -3,13 +3,14 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from docta_api import conversation_models  # noqa: F401
 from docta_api.config import get_settings
 from docta_api.models import Base
 
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 database_url = str(get_settings().database_url)
 sqlalchemy_database_url = database_url.replace(

@@ -1,0 +1,10 @@
+**
+!pyproject.toml
+!uv.lock
+!apps/
+!apps/api/
+!apps/api/src/
+!apps/api/src/**
+!infra/
+!infra/worker.Dockerfile
+**/__pycache__/
