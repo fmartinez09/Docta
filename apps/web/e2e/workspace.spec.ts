@@ -7,13 +7,13 @@ async function login(page: Page, role: string, viaLocalhost = false) {
     await page.goto(`${alias.origin}/auth/login`);
   } else {
     await page.goto("/");
-    await page.getByRole("link", { name: "Entrar a mi espacio" }).click();
+    await page.getByRole("link", { name: "Entrar a Docta" }).click();
   }
   await page.getByRole("link", { name: role, exact: true }).click();
-  await expect(page.getByText("Sesión iniciada")).toBeVisible();
-  // The session label is server-rendered; wait for the client workspace to load
-  // before clicking a control whose handler is attached during hydration.
-  await expect(page.getByText("Cargando tus cursos…", { exact: true })).toHaveCount(0);
+  // Wait for the client workspace to hydrate before clicking its controls.
+  await expect(
+    page.getByRole("button", { name: "Crear curso", exact: true }).first(),
+  ).toBeVisible();
 }
 
 test("teacher publication, student citations, reload, abstention and durable failure", async ({
@@ -22,20 +22,25 @@ test("teacher publication, student citations, reload, abstention and durable fai
 }, info) => {
   await login(page, "teacher", true);
   await page
-    .getByRole("button", { name: "＋ Crear curso", exact: true })
+    .getByRole("button", { name: "Crear curso", exact: true })
+    .first()
     .click();
-  await page.getByLabel("Nombre del nuevo curso").fill("Física · Laboratorio");
-  await page.getByRole("button", { name: "Crear", exact: true }).click();
+  const createDialog = page.getByRole("dialog", { name: "Crear curso" });
+  await createDialog.getByLabel("Nombre del curso").fill("Física · Laboratorio");
+  await createDialog
+    .getByRole("button", { name: "Crear curso", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Física · Laboratorio", exact: true }),
   ).toBeVisible();
   const course = new URL(page.url()).searchParams.get("course");
   expect(course).toBeTruthy();
+  await page.getByRole("button", { name: "Material", exact: true }).click();
   await page
     .locator("input[type=file]")
     .setInputFiles(process.env.DOCTA_E2E_PDF!);
   await page.getByRole("button", { name: "Subir PDF", exact: true }).click();
-  await page.getByRole("button", { name: "Publicar material →" }).click();
+  await page.getByRole("button", { name: "Publicar material" }).click();
   await expect(
     page.getByText("Publicado · Disponible para el tutor"),
   ).toBeVisible();
@@ -57,6 +62,9 @@ test("teacher publication, student citations, reload, abstention and durable fai
   await login(student, "student");
   await expect(
     student.getByRole("heading", { name: "Física · Laboratorio", exact: true }),
+  ).toBeVisible();
+  await expect(
+    student.getByText("Material del curso", { exact: true }),
   ).toBeVisible();
   await expect(student.getByRole("button", { name: "Subir PDF" })).toHaveCount(
     0,
@@ -91,7 +99,7 @@ test("teacher publication, student citations, reload, abstention and durable fai
   await expect(student.locator(".citation blockquote")).toContainText(
     "desplazamiento",
   );
-  await expect(student.locator(".citation summary")).toContainText("Pág. 1");
+  await expect(student.locator(".citation-heading")).toContainText("Pág. 1");
   await expect(student.locator(".citation small")).toContainText("Versión");
   await student.screenshot({
     path: info.outputPath("student.png"),
@@ -103,7 +111,7 @@ test("teacher publication, student citations, reload, abstention and durable fai
     .fill("astronomia galactica desconocida");
   await student.getByRole("button", { name: "Enviar pregunta" }).click();
   await expect(
-    student.getByText("· Evidencia insuficiente", { exact: true }),
+    student.getByText("Evidencia insuficiente", { exact: true }),
   ).toBeVisible();
   await student.getByLabel("Tu pregunta").fill("fallo velocidad");
   await student.getByRole("button", { name: "Enviar pregunta" }).click();
@@ -125,9 +133,10 @@ test("teacher publication, student citations, reload, abstention and durable fai
     path: info.outputPath("mobile.png"),
     fullPage: true,
   });
-  await student.getByRole("button", { name: "Cerrar sesión ↗" }).click();
+  await student.getByRole("button", { name: "Abrir navegación" }).click();
+  await student.getByRole("button", { name: "Cerrar sesión" }).click();
   await expect(
-    student.getByRole("link", { name: "Entrar a mi espacio" }),
+    student.getByRole("link", { name: "Entrar a Docta" }),
   ).toBeVisible();
   expect((await student.request.get("/api/docta/courses")).status()).toBe(401);
   await context.close();
