@@ -16,6 +16,12 @@ Optimize for evidence, isolation, failure visibility, and replaceable boundaries
 
 If documents disagree, report the contradiction and choose the least expansive implementation until it is resolved.
 
+Documentation map: `docs/DECISIONS.md` records history and open questions, not new approvals.
+`docs/DOCTA_HARNESS_ARCHITECTURE.md` reconciles a proposed pedagogical runtime with current
+contracts; it does not adopt a tool loop or supersede ADR 0004. Distinguish the offline evaluation
+harness (Increment 5) from the production tutor runtime. Files ending in `_REFERENCE.md` preserve
+historical/imported designs and are not active implementation instructions.
+
 ## Working style
 
 - Inspect the repository before changing it. Preserve user changes and existing conventions.

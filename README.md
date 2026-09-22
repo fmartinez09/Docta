@@ -1,218 +1,100 @@
 # Docta
 
-Docta is being built as a trustworthy pedagogical RAG tutor. Phase 0 is complete, covering
-Increments 0 through 4 (including 2B) of the [walking skeleton](docs/WALKING_SKELETON.md): an executable Next.js
-web app, a FastAPI boundary, PostgreSQL/MinIO infrastructure, OIDC authentication, course-scoped
-membership, direct PDF upload, page-aware ingestion, PostgreSQL FTS and atomic corpus activation.
-Ingestion runs in a separate worker through a PostgreSQL outbox and Redis Streams, with
-idempotent execution, leases, bounded retries and recovery after interruption.
-Conversation questions are durable before scoped FTS retrieval, tutor generation and validation.
-The API delivers lifecycle events and a validated persisted result over SSE, with auditable citations,
-idempotent retries and explicit failure recovery. The teacher/student workspace now includes
-OIDC login, PDF publication, durable chat, citation fragments and visible failures/abstention.
-See the [step-by-step browser runbook](docs/runbooks/browser-workspace.md).
+Tutor pedagógico RAG basado en evidencia del curso. Monolito modular con Next.js, FastAPI,
+PostgreSQL, almacenamiento S3/MinIO y worker de ingesta con Redis Streams.
 
-The active plan is [Phase 1 — Tutor Quality, Retrieval and Evaluation](docs/PHASE_1_TUTOR_QUALITY.md).
-The next implementation slice is **Increment 5: evaluation harness and reviewed dataset v0**;
-it is not implemented yet. Phase 0 remains the historical technical proof, not the current backlog
-or a claim of pilot readiness. Start with the [documentation index](docs/README.md),
-[implemented-state inventory](docs/CURRENT_STATE.md) and [ADR index](docs/adr/README.md).
+**Estado revisado documentalmente: 2026-09-22, código base `8ee13a5`.**
+Fase 0 completada: PDF digital → indexación → publicación → pregunta durable → respuesta
+validada con citas → interfaz OIDC. Esto demuestra el recorrido técnico, no calidad pedagógica
+ni preparación para un piloto.
 
-## Prerequisites
+El próximo trabajo es **Incremento 5: harness de evaluación y dataset v0 revisado**.
+No está implementado. El harness pedagógico adaptativo es una propuesta diferente, aún pendiente
+de decisión; no se ha adoptado un agent loop ni un nuevo framework.
 
-- Node.js 22 and npm 10
-- Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/)
-- Docker with Compose v2
+## Por dónde empezar
 
-## Clean checkout to green checks
+| Pregunta | Documento |
+| --- | --- |
+| ¿Qué está construido y con qué límites? | [Estado actual](docs/CURRENT_STATE.md) |
+| ¿Qué se decidió y qué falta decidir? | [Registro de decisiones](docs/DECISIONS.md) y [ADR](docs/adr/README.md) |
+| ¿Qué construimos a continuación? | [Fase 1 y criterios de Incremento 5](docs/PHASE_1_TUTOR_QUALITY.md) |
+| ¿Cómo se organiza el sistema? | [Arquitectura](docs/DOCTA_ARCHITECTURE.md) |
+| ¿Qué significa harness y qué cambiaría? | [Evaluación y runtime pedagógico](docs/DOCTA_HARNESS_ARCHITECTURE.md) |
+| ¿Cómo instalar, operar y diagnosticar? | [Runbooks](docs/runbooks/README.md) |
+| ¿Dónde está la historia? | [Índice documental](docs/README.md) y [Fase 0](docs/WALKING_SKELETON.md) |
 
-Run these commands from the repository root:
+## Arranque local
+
+Requisitos del proyecto: Node.js 22, npm 10, Python 3.12/3.13, uv y Docker Compose v2.
+Desde la raíz, conservar cualquier `.env` existente:
+
+En una instalación existente, detener API y workers antes de migrar y consultar el
+[procedimiento de actualización](docs/runbooks/ingestion.md#migrations-and-verification).
 
 ```powershell
-Copy-Item .env.example .env
-npm install
+if (-not (Test-Path -LiteralPath .env)) { Copy-Item .env.example .env }
+npm ci
 uv sync --cache-dir .uv-cache
 docker compose --env-file .env -f infra/compose.yaml up -d --wait
 uv run --cache-dir .uv-cache alembic -c apps/api/alembic.ini upgrade head
-docker compose -f infra/compose.test.yaml up -d --wait
-docker compose --env-file .env -f infra/compose.yaml --profile worker build worker
-uv run --cache-dir .uv-cache pytest tests/unit
-npm run lint:web
-npm run test:web
-uv run --cache-dir .uv-cache ruff check apps/api/src scripts tests
-npm run build:web
-npx playwright install chromium
-uv run --cache-dir .uv-cache pytest
-docker compose --env-file .env -f infra/compose.yaml config --quiet
 ```
 
-The integration suite uses `infra/compose.test.yaml` on ports 55432 (PostgreSQL), 56379
-(Redis), and 59000 (MinIO). Each run creates a separate database, bucket and stream and
-cleans only those generated resources. Its destructive migration rebuild never targets `.env`
-or the development database. A Docker-worker test restarts the dedicated test services and
-uses the built `docta-worker:latest` image; do not run multiple integration suites concurrently.
-Unit tests do not need these services. If Windows denies the
-default pytest temporary directory, use a fresh directory under `$env:TEMP` and
-`-p no:cacheprovider --basetemp=$doctaTestTemp` as documented in the browser runbook.
-Browser tests use the production build and Chromium; an installed Microsoft Edge can be selected
-with `$env:DOCTA_E2E_BROWSER_CHANNEL = "msedge"` instead of downloading Chromium.
+Configurar OIDC, origen/callback web y secreto de sesión según el
+[runbook del workspace](docs/runbooks/browser-workspace.md). Para respuestas reales, configurar
+endpoint, modelo y credencial conjuntamente según el [runbook del tutor](docs/runbooks/conversations.md).
+Sin OIDC no hay acceso autenticado; sin proveedor no hay generación real cuando la evidencia la requiere.
 
-## Run locally
-
-Start PostgreSQL, Redis and MinIO first, and apply pending migrations. When upgrading from
-Increment 2, stop the old API and any workers before migration 0006:
-
-```powershell
-docker compose --env-file .env -f infra/compose.yaml up -d --wait
-uv run --cache-dir .uv-cache alembic -c apps/api/alembic.ini upgrade head
-```
-
-Then use three terminals (API, web, worker):
+Iniciar cada proceso en una terminal distinta:
 
 ```powershell
 uv run --cache-dir .uv-cache uvicorn docta_api.main:app --app-dir apps/api/src --env-file .env --host 127.0.0.1 --port 8000
 ```
 
 ```powershell
-npm run dev:web
-```
-
-For the current local setup on `127.0.0.1:3100`, use `npm run dev:web:local` instead.
-
-```powershell
 uv run --cache-dir .uv-cache python -m docta_api.worker
 ```
 
-Alternatively, run the worker in Docker after migrations, instead of the third terminal:
-
 ```powershell
-docker compose --env-file .env -f infra/compose.yaml --profile worker up -d --build worker
+npm run dev:web
 ```
 
-The worker image installs from `uv.lock`, runs as a non-root user, and restarts unless stopped.
-Its build context excludes `.env` and all files except package metadata and API source.
-See the [ingestion operations runbook](docs/runbooks/ingestion.md) for recovery and diagnostics.
+El origen predeterminado es `http://127.0.0.1:3000`. Para un entorno configurado en 3100,
+usar `npm run dev:web:local` y mantener callback, CORS y `DOCTA_WEB_ORIGIN` sincronizados.
+La [guía completa de desarrollo](docs/runbooks/local-development.md) incluye worker Docker,
+helpers de token/upload, endpoints y comprobaciones de salud. No hay proveedor/modelo por defecto.
 
-Open the configured web origin (default `http://127.0.0.1:3000`).
+## Verificación
 
-For the workspace login, first register `http://127.0.0.1:3000/auth/callback` in your public OIDC
-application, configure its Client ID and generate `DOCTA_WEB_SESSION_SECRET` in `.env`.
-Next.js loads the root `.env` server-side. See the [browser runbook](docs/runbooks/browser-workspace.md)
-for exact steps, role provisioning limits and a reproducible browser test.
-
-Direct service probes are available at:
-
-- API liveness: `http://127.0.0.1:8000/api/v1/health/live`
-- API readiness: `http://127.0.0.1:8000/api/v1/health/ready`
-- Web liveness: `http://127.0.0.1:3000/api/health`
-- MinIO console: `http://127.0.0.1:9001`
-
-Authenticated course operations are available at:
-
-- `POST /api/v1/courses` creates a course and atomically makes the authenticated identity its
-  teacher. An `Idempotency-Key` makes retries durable; the UI always supplies one.
-- `GET /api/v1/courses` lists the current identity's courses; course document and conversation
-  lists are available under `/api/v1/courses/{course_id}/documents` and `/conversations`.
-  Document state lists require teacher membership; conversations are private to their owner.
-- `GET /api/v1/courses/{course_id}` returns a course only when the authenticated identity is a
-  member. Missing and unauthorized courses deliberately have the same safe response.
-- `POST /api/v1/courses/{course_id}/documents/uploads` creates an immutable document version and
-  returns a short-lived presigned PUT. It requires `Idempotency-Key`.
-- `POST /api/v1/courses/{course_id}/documents/{document_id}/versions/{version_id}/complete`
-  validates the object and commits ingestion/outbox together, returning `202` with `QUEUED`.
-  It also requires `Idempotency-Key`. The worker completes indexing asynchronously.
-- `GET /api/v1/courses/{course_id}/documents/{document_id}/versions/{version_id}` returns the
-  durable processing state and safe failure code.
-- `POST /api/v1/courses/{course_id}/corpus/activate` atomically activates only a `READY` corpus
-  when `expected_course_version` still matches.
-- `POST /api/v1/courses/{course_id}/conversations` creates a member's private conversation;
-  it requires `Idempotency-Key`.
-- `POST /api/v1/conversations/{conversation_id}/messages` accepts a JSON `question` and
-  `Idempotency-Key`, persists it, and returns SSE progress and the committed terminal result.
-- `GET /api/v1/conversations/{conversation_id}` returns paginated ordered durable history.
-- `GET /api/v1/conversations/{conversation_id}/messages/{message_id}` reconciles a single message.
-
-For real tutor responses, configure `DOCTA_TUTOR_ENDPOINT_URL`, `DOCTA_TUTOR_MODEL` and
-`DOCTA_TUTOR_API_KEY` together. The endpoint must support the Chat Completions strict JSON Schema
-contract. No provider is selected by default; missing configuration produces `MODEL_NOT_CONFIGURED`
-when evidence requires generation. See the [conversation runbook](docs/runbooks/conversations.md)
-for requests, limits, recovery and the live-model evaluation still required before a student pilot.
-
-Configure `DOCTA_OIDC_ISSUER`, `DOCTA_OIDC_AUDIENCE`, and `DOCTA_OIDC_JWKS_URL` together to use
-these endpoints. Only RS256 bearer tokens with valid signature, issuer, audience, subject, issued
-time, and expiration are accepted. Production configuration fails validation when OIDC is absent;
-development also fails closed on authenticated endpoints rather than trusting a local identity
-header.
-
-### Development bearer token
-
-In the local ZITADEL application, register `http://127.0.0.1:8765/callback` as a redirect URI and
-set **Token Type** to **JWT** under Token Settings. Copy its OIDC **Client ID** to
-`DOCTA_DEV_OIDC_CLIENT_ID` in `.env`; the Application ID is conceptually different and must not be
-assumed to be the client identifier. Then run:
+Checks sin servicios externos:
 
 ```powershell
-uv run python scripts/get_dev_token.py
+uv run --cache-dir .uv-cache pytest tests/unit
+uv run --cache-dir .uv-cache ruff check apps/api/src scripts tests
+npm run lint:web
+npm run test:web
+npm run build:web
+git diff --check
 ```
 
-The helper uses OIDC Discovery and Authorization Code + PKCE, opens the browser with
-`fernando.dev` as the login hint, validates the callback state, and verifies the signed access
-token's issuer, expiry, and Project ID audience through the same JWT verifier as FastAPI. It prints
-the token to standard output and does not save it. Use it as `Authorization: Bearer <token>`.
+Integración y E2E requieren servicios de prueba, imagen worker y navegador; seguir la
+[secuencia completa](docs/runbooks/local-development.md#clean-checkout-to-green-checks).
+Usan bases, buckets y streams generados, nunca los de desarrollo. Ejecutar suites serialmente:
+algunos tests reinician dependencias de prueba. No borrar volúmenes de desarrollo para hacerlas pasar.
 
-To create a development course, upload a text-based PDF, index it, and activate its corpus in one
-step, run:
+Los resultados fechados en los runbooks son históricos, no checks ejecutados en esta revisión.
+Los modelos deterministas prueban contratos; no sustituyen evaluación de calidad con material
+revisado y un proveedor real explícitamente autorizado.
 
-```powershell
-uv run python scripts/upload_dev_pdf.py .\ejemplo.pdf --course-title "Curso de prueba"
-```
+## Límites y colaboración
 
-The command obtains a fresh token through the browser. To reuse a token already held in the current
-PowerShell session without writing it to a file, set it only for the command and remove it afterward:
+Retrieval actual: FTS español AND sobre pregunta original, máximo cinco fragmentos. No hay
+consulta derivada, embeddings, pgvector, planner estructurado ni tool loop. Sin evidencia se
+abstiene; validar citas prueba procedencia/literalidad, no el soporte de cada afirmación.
 
-```powershell
-$env:DOCTA_DEV_ACCESS_TOKEN = $Token
-try {
-    uv run python scripts/upload_dev_pdf.py .\ejemplo.pdf
-} finally {
-    Remove-Item Env:\DOCTA_DEV_ACCESS_TOKEN
-}
-```
+Preservar curso/corpus autorizado, pregunta original, idempotencia, evidencia durable y validación
+antes de publicar. No hay conocimiento general como fallback, OCR ni acceso docente implícito a
+historias privadas. Las decisiones de piloto/modelo/privacidad siguen abiertas.
 
-The upload command forwards the exact presigned headers returned by FastAPI, polls the existing
-document version for up to ten minutes, and activates only after indexing. It never prints the
-token or presigned URL. If the wait expires, it prints the stable identifiers to query; it does
-not upload another copy.
-
-The object-storage adapter uses `DOCTA_S3_ENDPOINT_URL`, `DOCTA_S3_ACCESS_KEY`,
-`DOCTA_S3_SECRET_KEY`, `DOCTA_S3_BUCKET`, and `DOCTA_S3_REGION`. Upload, page and chunk limits are
-configured by the remaining `DOCTA_*` values in `.env.example`. PDF bytes go directly from the
-client to MinIO; FastAPI only creates the authorization and later verifies the stored object.
-
-If a local port is already occupied, change `POSTGRES_PORT`, `MINIO_API_PORT`, and
-`MINIO_CONSOLE_PORT` in `.env`, together with the matching ports in `DOCTA_DATABASE_URL` and
-`DOCTA_MINIO_HEALTH_URL`.
-
-Stop local infrastructure without deleting durable volumes:
-
-```powershell
-docker compose --env-file .env -f infra/compose.yaml down
-```
-
-## Current boundary
-
-Conversation durability, active-corpus FTS, typed tutor generation, evidence/citation validation
-and SSE are implemented at the API boundary. Ingestion uses a transactional `JobDispatcher`, Redis Streams and a separate
-worker; PostgreSQL owns job state and the outbox. Redis unavailability leaves confirmed work
-queued and does not trigger inline processing. API readiness covers PostgreSQL and object
-storage because it can accept durable work while Redis is unavailable; it does not assert
-that a worker is healthy. Worker failures are visible in structured logs and database job state.
-[ADR 0001](docs/adr/0001-ingestion-durability-and-response-delivery.md) records the scope.
-[ADR 0002](docs/adr/0002-durable-conversation-and-scoped-rag.md) records conversation semantics.
-The real HTTP adapter is configurable; concrete provider/model selection and live pedagogical
-evaluation remain open. Automated tests use deterministic model fakes and HTTP transport doubles.
-The student/teacher UI is implemented, including OIDC/PKCE, publication, durable chat and citation
-fragments; [ADR 0003](docs/adr/0003-browser-workspace-and-oidc-session.md) records its contract.
-There is no evaluation harness, conversational query resolution, vector retrieval or structured
-pedagogical planner yet. Hybrid retrieval and richer tutoring are gated Phase 1 work; OCR and
-gateway deployment remain deferred. Existing model smoke tests do not establish pedagogical quality.
+Leer [AGENTS.md](AGENTS.md) antes de modificar el proyecto. La arquitectura propuesta y las
+referencias históricas no autorizan nuevas dependencias o cambios de contrato por sí solas.

@@ -55,3 +55,12 @@ implemented. The 2B checklist must be updated only with passing implementation e
 Any rollback must stop consumers and preserve database jobs/outbox and object versions;
 never silently fall back to inline processing or discard pending work. Changes to these
 decisions require a superseding ADR.
+
+## Subsequent status note — 2026-09-22
+
+The context above describes the pre-2B system, not today's execution. Ingestion/outbox/Streams
+were implemented in 2B; validated SSE was implemented in 3. ADR 0002 chose the configurable
+HTTP model boundary without making a gateway mandatory. The historical LiteLLM preference
+is not a claim that it is installed or a current instruction to deploy it.
+See the [implementation inventory](../CURRENT_STATE.md) and [decision history](../DECISIONS.md).
+This documentation review did not rerun ingestion or acceptance tests and changes no decision.

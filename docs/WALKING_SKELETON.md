@@ -20,6 +20,15 @@ including browser, ten web tests, Ruff and ESLint after the initial Increment 4 
 Those are successive historical runs. This documentary closure does not assert a new test run,
 pedagogical benchmark, production-browser model validation or pilot readiness.
 
+## Documentation reconciliation note — 2026-09-22
+
+The original specification, completion checklists and dated verification records below remain
+historical evidence. The [current inventory](CURRENT_STATE.md) now inspects HEAD `8ee13a5`;
+this note does not rerun or update the historical test counts. The
+[decision history](DECISIONS.md) explains the original architecture, ADRs and subsequent proposals.
+The [harness design](DOCTA_HARNESS_ARCHITECTURE.md) distinguishes evaluation from production
+orchestration. It does not reopen Phase 0 or add an accepted tool loop to its scope.
+
 ## 1. Outcome
 
 One teacher can create a course, upload one text-based PDF, make its indexed version active, and let one student ask a question. Docta persists the question before invoking the RAG path and returns either:

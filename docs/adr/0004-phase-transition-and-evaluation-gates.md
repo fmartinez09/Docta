@@ -79,3 +79,17 @@ their experiment and explicitly refine any affected accepted contract.
 Revising this direction requires a new dated decision and an updated active plan. Preserve
 Phase 0 evidence and evaluation versions even when a candidate is rejected; do not rewrite
 historical reports or remove isolation/provenance guarantees to improve a score.
+
+## Subsequent status note — 2026-09-22
+
+Increment 5 remains pending in the inspected code. The documentation now distinguishes its
+offline evaluation harness from the proposed pedagogical runtime. The imported architecture
+recommends a bounded tool loop, which conflicts with decision 5 above; documenting that proposal
+does not accept it. The active plan still preserves strict course grounding and the later
+typed, bounded second-retrieval design without an agent loop.
+
+A future acceptance must explicitly refine this ADR and affected parts of ADR 0002, with scope,
+budgets, failure semantics, provider compatibility and evaluation gates. See the
+[reconciled harness](../DOCTA_HARNESS_ARCHITECTURE.md) and [D-05](../DECISIONS.md).
+This note records the distinction without altering the accepted decision or marking any
+Phase 1 implementation complete.

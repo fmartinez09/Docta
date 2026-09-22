@@ -1,6 +1,6 @@
 # Fase 1 — Calidad tutorial, retrieval y evaluación
 
-**Fecha:** 2026-09-09\
+**Fecha de adopción del plan:** 2026-09-09. **Revisión documental:** 2026-09-22.\
 **Estado:** plan activo; implementación pendiente.\
 **Próximo slice:** Incremento 5 — Evaluation Harness + Dataset v0.\
 **Decisión de transición:** [ADR 0004](adr/0004-phase-transition-and-evaluation-gates.md).
@@ -22,6 +22,18 @@ su secuencia de incrementos 5–15, con gates explícitos. Las referencias a KIT
 de diseño; no se atribuyen aquí resultados a un paper sin una revisión bibliográfica específica.
 La agrupación interna K/I/T/E del monolito y el enfoque pedagógico inspirado en KITE son conceptos
 distintos, aunque compartan el nombre en la arquitectura.
+
+### Relación con la nueva propuesta de harness
+
+El [harness pedagógico](DOCTA_HARNESS_ARCHITECTURE.md) propone estado de actividad y un bucle
+acotado de herramientas. No es el **harness de evaluación** del Incremento 5. Esta revisión
+documenta la diferencia sin aceptar el bucle ni cambiar la secuencia vigente de incrementos.
+ADR 0004 permanece vigente; una adopción requiere resolver D-05 en el [registro de decisiones](DECISIONS.md).
+
+La propuesta original sugiere extraer retrieval y añadir actividad como siguiente entrega.
+En este repositorio `Retriever` ya devuelve evidencia y el siguiente slice sigue siendo medirlo.
+La primera actividad puede concretar la evolución de 8; no se afirma implementada ni se adelanta
+por la sola existencia del documento. Mejorar retrieval medido no depende de construir un loop.
 
 ## 2. Reglas de la fase
 
@@ -141,6 +153,17 @@ Clasificaciones diagnósticas iniciales: `QUERY_RESOLUTION`, `RETRIEVAL_MISS`, `
 `FALSE_ANSWER`, `CITATION_INVALID`, `GROUNDING_UNSUPPORTED`, `PEDAGOGY_MISMATCH`, `TECHNICAL_FAILURE`.
 Registrar `UNDETERMINED` cuando la evidencia no permita atribuir una causa; puede haber más de una.
 
+#### Cobertura futura, sin ampliar el cierre de 5
+
+Las 40–60 conversaciones propuestas en el documento de harness no reemplazan los 30–50 casos
+revisados de este incremento. Versionar cualquier ampliación y distinguir caso de conversación:
+un caso puede incluir historial mínimo, pero no equivale a un estudio longitudinal.
+
+Si se acepta ejecución adaptativa, añadir posteriormente etiquetas de búsqueda necesaria,
+evidencia ya disponible y respuesta no factual; medir omisiones, búsquedas innecesarias, argumentos
+inválidos y agotamiento. Hasta implementar esa capacidad, registrar sus métricas como no medidas,
+no atribuir al baseline herramientas inexistentes ni crear gold desde decisiones del propio modelo.
+
 #### Criterios de aceptación
 
 - [ ] Schema y validación rechazan casos incompletos, IDs repetidos y referencias de evidencia inválidas.
@@ -157,6 +180,9 @@ Registrar `UNDETERMINED` cuando la evidencia no permita atribuir una causa; pued
 No se exige que el baseline tenga buena calidad para cerrar 5: se exige medirlo correctamente.
 Una evaluación con proveedor externo no es requisito de CI; si queda pendiente, se registra como
 gate abierto para comparar calidad de generación, escoger modelo y autorizar un piloto.
+
+**Fuera de esta entrega:** `TutorActivity`, tool calling, cambios de prompt para subir puntuaciones,
+selección de framework, pgvector y exportación de historiales privados. No son prerrequisitos del runner.
 
 ## 5. Evolución después del baseline
 
@@ -271,6 +297,11 @@ responsables operacionales y criterios de éxito/parada de un piloto pequeño. N
 son requisitos si no superaron sus gates. Un test de reconstrucción de migraciones no acredita restore.
 
 ## 6. Decisiones y mantenimiento
+
+La lista de preguntas abiertas y sus gates se mantiene en [DECISIONS.md](DECISIONS.md), para no
+confundirlas con ADR aceptados. El [diseño del harness](DOCTA_HARNESS_ARCHITECTURE.md) conserva
+las alternativas y sus discrepancias con el plan. Cualquier reordenamiento debe identificar
+qué dependencias cambia y qué evidencia/decisión lo autoriza; conservar la numeración histórica.
 
 Antes de implementar 5 se debe concretar material permitido, responsable de revisión y composición
 del dataset; si falta una definición, pueden avanzarse schema/runner con fixtures sintéticas sin
