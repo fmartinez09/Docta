@@ -81,3 +81,16 @@ The adapter checks refusal and incomplete output rather than exposing provider t
 To reverse this implementation, stop API executions and preserve/export conversation tables and
 evidence first. Migration downgrade removes conversation data and is only exercised in the
 isolated integration database. No production downgrade or data deletion is an operational retry.
+
+## Subsequent status note — 2026-09-22
+
+This remains the runtime contract. ADR 0003 refined HTTP-provider compatibility; ADR 0004
+planned quality evaluation without adopting query rewriting, tools or automatic provider retries.
+The existing `Retriever` already returns evidence independently of generation. Its exact-question
+binding must be explicitly refined before accepting derived queries, not removed incidentally.
+
+The [harness proposal](../DOCTA_HARNESS_ARCHITECTURE.md) considers activity/run state, tool calls,
+new events and recovery between steps. Those are not implemented by this ADR. Preserve current
+atomic completion and idempotency through any migration; do not rebuild them in parallel tables
+or defer them until after a loop is introduced. See [open decisions](../DECISIONS.md).
+No runtime suites or live-provider checks were rerun by this documentation review.

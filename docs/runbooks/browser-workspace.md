@@ -5,13 +5,20 @@ el siguiente trabajo es [evaluación de calidad en Fase 1](../PHASE_1_TUTOR_QUAL
 El registro local fechado a continuación es histórico; comprobar procesos y configuración
 antes de reutilizarlo, sin asumir que siguen activos.
 
+**Revisión documental:** 2026-09-22, sobre HEAD `8ee13a5`. No se arrancó ni probó el navegador
+en esta revisión. El commit actual cambia componentes, estilos y pruebas, no los contratos
+de autenticación ni el backend de tutoría.
+
+### Registro histórico de entorno — 2026-09-08
+
 Estado local verificado el 2026-09-08: web en `http://127.0.0.1:3100`, API en el puerto 8000,
 worker activo y base migrada hasta 0008. ZITADEL está iniciado y el flujo de Docta llega a su
 pantalla de acceso. Unsloth pasó una prueba sintética con una cita válida usando el perfil
 `DOCTA_TUTOR_PROVIDER=unsloth` y un presupuesto de 512 tokens. Reinicia la API después de
 cambiar esa configuración. El callback de
-la web debe usar el puerto **3100**. Los ejemplos de instalación limpia usan 3000; al usar el `.env` local actual,
-sustituye 3000 por 3100 en la dirección, el callback y el comando de arranque de la web.
+la web de aquella sesión usaba el puerto **3100**. Los ejemplos de instalación limpia usan 3000;
+si mantienes una configuración en 3100, sustituye ese puerto en dirección, callback y arranque.
+Este registro no afirma qué procesos, modelo o puertos están activos hoy.
 
 La interfaz incluye acceso OIDC, creación de cursos, carga directa del PDF, seguimiento de
 procesamiento, publicación y conversaciones con estados y citas. El rol lo determina la
@@ -56,14 +63,18 @@ de argumentos de npm desde PowerShell.
 
 ## 2. Iniciar servicios y migrar
 
-Si el stack local de ZITADEL ya está creado pero detenido, arráncalo conservando sus datos:
+Si dispones del stack opcional local `zitadel-compose` ya creado pero detenido, puedes arrancarlo
+conservando sus datos. No forma parte del Compose principal ni es un requisito para usar otro
+proveedor OIDC compatible:
 
 ```powershell
 docker compose -p zitadel -f zitadel-compose/docker-compose.yml start
 ```
 
 El comando usa la configuración y los volúmenes existentes de `zitadel-compose`; conserva su
-`.env`. Comprueba que `http://localhost:8080/.well-known/openid-configuration` responde.
+`.env`. No lo ejecutes si ese archivo no existe en tu instalación. En esa configuración histórica,
+comprueba que `http://localhost:8080/.well-known/openid-configuration` responde; para otra, usa
+el issuer que hayas configurado.
 Si accedes a Docta por `localhost`, el inicio de sesión te redirige al origen configurado antes
 de crear su cookie PKCE, para que coincida con el dominio del callback.
 
@@ -95,6 +106,9 @@ npm run dev:web
 
 ## 3. Recorrido manual
 
+Los nombres visibles pueden cambiar con la UI; verificar la operación y el estado durable,
+no solo el texto de un botón. Este recorrido prueba el flujo técnico, no el benchmark pedagógico.
+
 1. Abre `http://127.0.0.1:3000` y pulsa **Entrar a mi espacio**. Inicia sesión en ZITADEL.
 2. Pulsa **Crear curso**, escribe un nombre y confirma. Aparece el espacio docente.
 3. Selecciona un PDF digital con texto seleccionable, de hasta 10 MB, y pulsa **Subir PDF**.
@@ -105,7 +119,8 @@ npm run dev:web
    una respuesta pedagógica. Abre su cita para comprobar documento, página, texto y versión.
 6. Recarga la página. La pregunta y la respuesta deben seguir presentes. También puedes recargar
    durante el estado pendiente: el servidor continúa y la interfaz recupera el resultado.
-7. Pregunta por un tema ausente. Debe aparecer **Evidencia insuficiente**, sin citas inventadas.
+7. Pregunta por un tema cuya ausencia en el corpus hayas comprobado. Debe aparecer una abstención
+   por evidencia insuficiente, sin citas inventadas; un fallo técnico se presenta por separado.
 8. Para probar un fallo real, detén el servidor del modelo y pregunta por términos presentes en
    el PDF. Debe aparecer el fallo con la pregunta conservada. Reinicia el modelo; el siguiente
    envío es una nueva pregunta. **Recuperar envío** reconcilia una entrega interrumpida usando
@@ -151,6 +166,10 @@ uv run pytest -p no:cacheprovider --basetemp=$doctaTestTemp
 ```
 
 ## Límites actuales
+
+El inventario de referencia está en [CURRENT_STATE.md](../CURRENT_STATE.md); la propuesta de
+harness no añade tools ni modos nuevos a esta interfaz. Los comandos completos de instalación
+y verificación están en [desarrollo local](local-development.md).
 
 Los listados muestran como máximo los 100 cursos, documentos o conversaciones más recientes;
 el historial de mensajes sí se recorre por páginas. No hay OCR, inscripción, visor PDF embebido,

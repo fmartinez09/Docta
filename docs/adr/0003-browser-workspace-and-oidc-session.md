@@ -66,3 +66,12 @@ OpenAPI contract. They do not affect the standard Chat Completions adapter. A re
 request with Qwen3.5-9B completed in 5.6 seconds with one validated citation, using a 512-token
 budget; the earlier request exceeded 45 seconds. This is a compatibility/latency smoke test,
 not a pedagogical evaluation or an end-to-end production-browser validation.
+
+## Subsequent status note — 2026-09-22
+
+Commit `8ee13a5` updates workspace/chat/material components, styles and browser test code;
+the inspected package adds Radix Dialog and Lucide alongside assistant-ui and custom CSS.
+It does not introduce OpenUI, a pedagogical planner or a tool runtime. The BFF/PKCE/session
+contract above remains the accepted boundary. Historical smoke timings and test outcomes
+are not fresh verification of this UI commit or of the current local model.
+Consult [current state](../CURRENT_STATE.md) and the [browser runbook](../runbooks/browser-workspace.md).

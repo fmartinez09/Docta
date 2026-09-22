@@ -4,6 +4,11 @@ Current ingestion contract, introduced in Increment 2B and retained after Phase 
 See [ADR 0001](../adr/0001-ingestion-durability-and-response-delivery.md) and the
 [current-state inventory](../CURRENT_STATE.md). The recovery procedures below remain active.
 
+Documentation reviewed 2026-09-22 against the versioned configuration and architecture. No worker,
+migration or recovery exercise was run by this documentation task. For installation and the full
+test sequence, use [local development](local-development.md). The pedagogical harness proposal
+does not move conversational execution onto the ingestion queue.
+
 ## Process and transaction boundaries
 
 The API checks the immutable object version and commits the document's `QUEUED` state,
@@ -101,7 +106,8 @@ migration gives pending jobs an outbox event, recovers old RUNNING jobs with a n
 token and records existing failures as dead-letter events. Indexed/active corpora remain intact.
 Do not downgrade a live queue: stop consumers and preserve database/outbox/object state first.
 
-Run the complete README sequence. Integration fixtures use only the dedicated test Compose
+Run the complete [local-development sequence](local-development.md#clean-checkout-to-green-checks).
+Integration fixtures use only the dedicated test Compose
 services and generated databases, buckets and Redis keys. They cover the HTTP-to-worker path,
 transaction rollback, duplicate publish, commit-before-ACK recovery, expired-worker fencing,
 bounded retries, dead letters, missing stream reconciliation, immutable objects and scope denial.

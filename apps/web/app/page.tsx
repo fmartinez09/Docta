@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import { Workspace } from "@/components/workspace";
 import { authConfig, unseal } from "@/lib/auth";
 
@@ -38,26 +39,21 @@ export default async function Home({
     <main className="landing">
       <header>
         <Link href="/" className="brand">
-          <span className="brand-mark">d</span>docta
-          <span className="brand-dot">.</span>
+          <span className="brand-mark">d</span>
+          <span>docta</span>
         </Link>
-        <span className="eyebrow">TU ESPACIO PARA COMPRENDER</span>
       </header>
       <section className="landing-content">
-        <div>
-          <p className="eyebrow">APRENDER, UNA PREGUNTA A LA VEZ</p>
-          <h1>
-            Las buenas preguntas
-            <br />
-            abren nuevos caminos.
-          </h1>
+        <div className="landing-copy">
+          <span className="landing-kicker">Tutor de estudio con fuentes</span>
+          <h1>Entiende. No memorices.</h1>
           <p className="landing-description">
-            Un espacio para explorar el material de tu curso, encontrar pistas y
-            construir tus propias respuestas. Siempre con las fuentes a mano.
+            Pregunta sobre el material de tu curso y recibe orientación con
+            citas verificables.
           </p>
           {configured ? (
             <a className="primary login-button" href="/auth/login">
-              Entrar a mi espacio <span>↗</span>
+              Entrar a Docta <ArrowRight size={17} />
             </a>
           ) : (
             <p className="notice">
@@ -71,34 +67,8 @@ export default async function Home({
               nuevamente.
             </p>
           )}
-          <p className="landing-note">
-            Tu material. Tus preguntas. Tu aprendizaje.
-          </p>
-        </div>
-        <div className="learning-card" aria-label="Cómo te acompaña Docta">
-          <span className="large-star">✳</span>
-          <p className="eyebrow">UN POCO DE CURIOSIDAD</p>
-          <h2>
-            ¿Y si empezamos
-            <br />
-            por entender el porqué?
-          </h2>
-          <div className="learning-steps">
-            <p>
-              <span>01</span> Explora el material de tu curso
-            </p>
-            <p>
-              <span>02</span> Pregunta, intenta y descubre
-            </p>
-            <p>
-              <span>03</span> Comprueba las fuentes y avanza
-            </p>
-          </div>
         </div>
       </section>
-      <footer>
-        DOCTA <span>Hecho para acompañar el aprendizaje.</span>
-      </footer>
     </main>
   );
 }

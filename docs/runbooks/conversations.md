@@ -8,6 +8,10 @@ This remains the current operational contract after Phase 0 closure. The browser
 implemented in Increment 4; see its [runbook](browser-workspace.md). Quality work is planned in
 [Phase 1](../PHASE_1_TUTOR_QUALITY.md); future resolution/planner modes are not runtime capabilities yet.
 
+**Documentation review:** 2026-09-22. Procedures below describe the inspected code. Dated live
+diagnostics remain historical; this review did not invoke a model or inspect the active `.env`.
+The proposed [pedagogical runtime](../DOCTA_HARNESS_ARCHITECTURE.md) is not the current tool API.
+
 ## Start and configure
 
 Apply migrations before starting the updated API:
@@ -24,11 +28,11 @@ Set these values in the local environment or secret manager before starting the 
 | `DOCTA_TUTOR_ENDPOINT_URL` | Full `/v1/chat/completions` endpoint supporting strict JSON Schema. No default provider. |
 | `DOCTA_TUTOR_MODEL` | Provider model identifier or configured gateway alias. No default model. |
 | `DOCTA_TUTOR_API_KEY` | Bearer credential for that endpoint. Never commit or print it. |
-| `DOCTA_TUTOR_TIMEOUT_SECONDS` | 45 seconds; must be shorter than message deadline. |
+| `DOCTA_TUTOR_TIMEOUT_SECONDS` | Default 45; allowed 1–120 seconds, strictly shorter than message timeout. |
 | `DOCTA_TUTOR_MAX_OUTPUT_TOKENS` | 2,000, including the provider's completion budget. |
 | `DOCTA_TUTOR_SCHEMA_PROFILE` | `standard`; use `llama_cpp` for servers rejecting large `maxLength` grammar repetitions. |
 | `DOCTA_TUTOR_PROVIDER` | `chat_completions`; `unsloth` disables Studio thinking/tools/MCP and also supplies `max_tokens`. |
-| `DOCTA_MESSAGE_TIMEOUT_SECONDS` | 90 seconds. Bounds the complete operation; deadline is stored in PostgreSQL. |
+| `DOCTA_MESSAGE_TIMEOUT_SECONDS` | Default 90; allowed 5–180 seconds. Bounds the complete operation; deadline is stored in PostgreSQL. |
 
 Endpoint/model/key must be supplied together. HTTPS is required in production. Unconfigured
 generation records `MODEL_NOT_CONFIGURED`; it never substitutes a deterministic runtime model.
@@ -49,11 +53,35 @@ sends `enable_thinking=false`, `enable_tools=false`, `mcp_enabled=false`, and ma
 Restart the API after changing `.env`; an existing process retains its initial configuration.
 If a response exceeds its token budget it fails validation; no truncated answer is exposed.
 
+### Startup failure after increasing a timeout
+
+`Tutor timeout must be shorter than message timeout` is configuration validation during startup,
+not a retrieval or provider error. Both settings use numeric seconds, without a unit suffix.
+An illustrative valid pair is:
+
+```dotenv
+DOCTA_TUTOR_TIMEOUT_SECONDS=120
+DOCTA_MESSAGE_TIMEOUT_SECONDS=150
+```
+
+This is not a recommended latency target or a claim about the active environment. It leaves
+additional time for retrieval/validation/persistence but does not guarantee completion. Do not
+exceed the bounds in [config.py](../../apps/api/src/docta_api/config.py); restart the API after
+changes. Equal timeouts fail validation. Raising a timeout neither improves retrieval nor proves
+model reliability. Never paste the full `.env` or validation payload containing credentials into logs.
+
+### Retrieval is separate from provider connectivity
+
 The current retriever uses strict all-term full-text search. It does not repair missing spaces:
 `que esRetrieval-augmented Generation` searches for `esretrieval`, whereas
 `¿Qué es Retrieval-augmented Generation?` searches the intended concept. A greeting such as
 `Hola` normally retrieves no course evidence and returns the deterministic abstention without
 calling the model. Confirm retrieval separately from provider connectivity when diagnosing it.
+
+FTS processes Spanish lexemes and stopwords; it is not an exact-string comparison of the whole
+question, nor BM25 or dense semantic retrieval. Its current AND condition and original-query
+contract can miss relevant evidence. A trace with several chunks does not prove those chunks
+contain enough information to answer.
 
 ## Exercise the API
 
@@ -101,6 +129,23 @@ while one is pending returns `409 conversation_busy` and is not accepted.
 
 ## Failure and recovery
 
+### Diagnose the stage before changing a component
+
+| Observation | What it establishes | Next safe check |
+| --- | --- | --- |
+| API fails configuration validation | No accepted conversation execution yet. | Numeric values, bounds and tutor timeout shorter than message timeout. |
+| `failed` / `MODEL_UNAVAILABLE` | Provider call failed or timed out. | Endpoint availability, compatible configuration, safe duration/outcome; not evidence absence. |
+| `completed` abstention, zero evidence | No generation was needed; retrieval returned empty. | Captured corpus, authorized source and actual query; annotate expected evidence before judging a miss. |
+| `completed` abstention, nonempty evidence | Provider abstained and validation canonicalized the response. | Whether retrieved content really supports the question, then model/prompt behavior. |
+| Answer with valid citations | Scope/provenance/literal quotation checks passed. | Human review of claim support, correctness and pedagogical help. |
+
+Inspect persisted evidence only through authorized access and keep educational content out of
+operational logs. Do not infer a recall failure solely from the final UI message. If the answer
+is in an authorized source but not retrieved, retain it as a reviewed evaluation candidate, not
+an automatically exported private conversation. Unknown causes remain `UNDETERMINED`.
+
+### Public classifications
+
 | Code | Behavior/action |
 | --- | --- |
 | `COURSE_CORPUS_NOT_READY` | Publish an indexed course corpus, then explicitly submit a new question/key. |
@@ -130,6 +175,8 @@ After a prompt change, restart the API process and submit a new question. Reusin
 idempotency key only returns its original persisted result. No migration, re-upload or web
 restart is required for this prompt update.
 
+### Historical prompt diagnostic — 2026-09-08
+
 Live diagnostic evidence (2026-09-08, explicitly authorized): a saved RAG definition question had
 five retrieved fragments and no prior history. The original prompt abstained in both replays.
 Earlier candidate instructions elicited explanations but sometimes changed quoted text, which
@@ -144,6 +191,8 @@ Verification after the prompt change: 24 targeted tutor tests and the full 118-t
 (including the browser flow) passed. The ten web unit tests, Ruff, ESLint and `git diff --check`
 also passed. The full suite used dedicated test services with `DOCTA_TEST_MINIO_PORT=19500`,
 `DOCTA_E2E_BROWSER_CHANNEL=msedge` and a fresh pytest temporary directory.
+
+### Current recovery semantics
 
 An API crash does not cause automatic provider re-execution. On restart, the recovery sweep marks
 expired pending messages failed within five seconds of their stored deadline (authenticated reads

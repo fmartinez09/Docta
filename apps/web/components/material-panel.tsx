@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Check,
+  CircleAlert,
+  FileText,
+  RefreshCw,
+  Upload,
+} from "lucide-react";
+import {
   api,
   DoctaError,
   humanError,
@@ -182,17 +189,12 @@ export function MaterialPanel({
   }
 
   return (
-    <aside className="material panel" aria-label="Material del curso">
-      <div className="panel-heading">
-        <span className="icon-box">▤</span>
-        <div>
-          <h2>Material del curso</h2>
-          <p>El punto de partida para aprender.</p>
-        </div>
-      </div>
+    <div className="material" aria-label="Material del curso">
       <form onSubmit={uploadFile}>
         <label className="file-drop" htmlFor="pdf-file">
-          <span aria-hidden="true">↑</span>
+          <span className="upload-icon" aria-hidden="true">
+            <Upload size={19} />
+          </span>
           <strong>{file?.name ?? "Añade un PDF"}</strong>
           <small>Texto seleccionable · Hasta 10 MB</small>
         </label>
@@ -207,7 +209,8 @@ export function MaterialPanel({
           }}
         />
         <button className="primary full" disabled={!file || busy}>
-          {busy ? "Preparando material…" : "Subir PDF"}
+          {busy ? <RefreshCw className="spin" size={16} /> : <Upload size={16} />}
+          {busy ? "Preparando…" : "Subir PDF"}
         </button>
       </form>
       {status && (
@@ -221,22 +224,24 @@ export function MaterialPanel({
         </p>
       )}
       <div className="document-list">
+        {documents.length > 0 && <p className="section-label">Documentos</p>}
         {documents.map((document) => {
           const active =
             !!document.corpus_version_id &&
             document.corpus_version_id === course.active_corpus_version_id;
           return (
             <article className="document" key={document.version_id}>
-              <span className="pdf-tag">PDF</span>
+              <span className="document-icon"><FileText size={18} /></span>
               <div className="document-info">
                 <strong>{document.title}</strong>
-                <small className={active ? "text-green" : ""}>
+                <small className={active ? "text-active" : ""}>
                   {active
                     ? "Publicado · Disponible para el tutor"
                     : (labels[document.state] ?? document.state)}
                 </small>
                 {document.failure_code && (
                   <p className="document-error">
+                    <CircleAlert size={14} />
                     {humanError(new DoctaError(document.failure_code))}
                   </p>
                 )}
@@ -246,7 +251,7 @@ export function MaterialPanel({
                     disabled={busy}
                     onClick={() => publish(document)}
                   >
-                    Publicar material →
+                    <Check size={15} /> Publicar material
                   </button>
                 )}
               </div>
@@ -255,9 +260,9 @@ export function MaterialPanel({
         })}
       </div>
       <p className="material-note">
-        El tutor consultará el material publicado. Las citas anteriores se
-        conservan aunque publiques otro PDF.
+        Cambiar el PDF publicado no modifica las citas de conversaciones
+        anteriores.
       </p>
-    </aside>
+    </div>
   );
 }

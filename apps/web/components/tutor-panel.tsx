@@ -3,11 +3,23 @@
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
+  MessagePrimitive,
   ThreadPrimitive,
+  useAuiState,
   useExternalStoreRuntime,
   type AppendMessage,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
+import {
+  ArrowDown,
+  ArrowUp,
+  BookOpen,
+  ChevronDown,
+  CircleAlert,
+  LoaderCircle,
+  MessageSquarePlus,
+  Sparkles,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -21,12 +33,122 @@ import {
 import { readEvents } from "@/lib/sse";
 
 const phases: Record<string, string> = {
-  "message.accepted": "Pregunta guardada. Buscando en el material…",
-  "retrieval.started": "Buscando en el material…",
-  "retrieval.completed": "Encontramos material para revisar.",
-  "generation.started": "El tutor está preparando una respuesta…",
-  "validation.started": "Revisando la respuesta y sus citas…",
+  "message.accepted": "Pregunta guardada",
+  "retrieval.started": "Consultando el material",
+  "retrieval.completed": "Material encontrado",
+  "generation.started": "Preparando una orientación",
+  "validation.started": "Verificando respuesta y citas",
 };
+
+type TutorMessageMetadata = {
+  state?: Message["state"];
+  response?: Message["response"];
+  failureCode?: string | null;
+  phase?: string;
+};
+
+function useTutorMessageMetadata(): TutorMessageMetadata {
+  return useAuiState(
+    (state) => state.message.metadata.custom,
+  ) as unknown as TutorMessageMetadata;
+}
+
+function StudentMessage() {
+  return (
+    <MessagePrimitive.Root className="turn user-turn">
+      <div className="student-message">
+        <MessagePrimitive.Parts />
+      </div>
+    </MessagePrimitive.Root>
+  );
+}
+
+function TutorMessage() {
+  const metadata = useTutorMessageMetadata();
+  const status = useAuiState((state) => state.message.status);
+  const pending = metadata.state === "pending" || status?.type === "running";
+
+  if (pending) {
+    return (
+      <MessagePrimitive.Root className="turn assistant-turn">
+        <p className="pending-state" role="status">
+          <LoaderCircle className="spin" size={16} />
+          {metadata.phase || "Preparando respuesta"}
+        </p>
+      </MessagePrimitive.Root>
+    );
+  }
+
+  if (metadata.state === "failed") {
+    return (
+      <MessagePrimitive.Root className="turn assistant-turn">
+        <div className="failed-message" role="alert">
+          <CircleAlert size={17} />
+          <div>
+            <strong>No pudimos completar esta respuesta</strong>
+            <p>
+              {humanError(
+                new DoctaError(metadata.failureCode ?? "INTERNAL_ERROR"),
+              )}
+            </p>
+          </div>
+        </div>
+      </MessagePrimitive.Root>
+    );
+  }
+
+  const response = metadata.response;
+  return (
+    <MessagePrimitive.Root className="turn assistant-turn">
+      <div className="assistant-message">
+        <div className="assistant-identity">
+          <span className="assistant-avatar" aria-hidden="true">
+            <Sparkles size={13} />
+          </span>
+          <strong>Docta</strong>
+          {response?.mode === "abstain" && (
+            <span className="abstention-label">Evidencia insuficiente</span>
+          )}
+        </div>
+        <div className="answer-text">
+          <MessagePrimitive.Parts />
+        </div>
+        {!!response?.citations.length && (
+          <details className="citation">
+            <summary>
+              <span>
+                <BookOpen size={15} />
+                {response.citations.length}{" "}
+                {response.citations.length === 1 ? "fuente" : "fuentes"}
+              </span>
+              <ChevronDown size={15} className="citation-chevron" />
+            </summary>
+            <div className="citation-list">
+              {response.citations.map((citation) => (
+                <div className="citation-item" key={citation.chunk_id}>
+                  <div className="citation-heading">
+                    <strong>{citation.document_title}</strong>
+                    <span>
+                      Pág. {citation.page}
+                      {citation.page_end !== citation.page
+                        ? `–${citation.page_end}`
+                        : ""}
+                    </span>
+                  </div>
+                  <blockquote>{citation.quote}</blockquote>
+                  <small>
+                    Fragmento {citation.fragment} · Versión{" "}
+                    {citation.document_version_id}
+                  </small>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+    </MessagePrimitive.Root>
+  );
+}
 
 export function TutorPanel({
   course,
@@ -230,15 +352,30 @@ export function TutorPanel({
       content: [{ type: "text", text: message.question }],
       createdAt: new Date(message.created_at),
     };
-    if (!message.response) return [user];
+    const assistant: ThreadMessageLike = {
+      id: `${message.id}-answer`,
+      role: "assistant",
+      content: message.response
+        ? [{ type: "text", text: message.response.answer }]
+        : [],
+      status:
+        message.state === "pending"
+          ? { type: "running" }
+          : message.state === "failed"
+            ? { type: "incomplete", reason: "error" }
+            : { type: "complete", reason: "stop" },
+      metadata: {
+        custom: {
+          state: message.state,
+          response: message.response,
+          failureCode: message.failure_code,
+          phase: message.state === "pending" ? phase : undefined,
+        },
+      },
+    };
     return [
       user,
-      {
-        id: `${message.id}-answer`,
-        role: "assistant",
-        content: [{ type: "text", text: message.response.answer }],
-        status: { type: "complete", reason: "stop" },
-      },
+      assistant,
     ];
   });
   const runtime = useExternalStoreRuntime({
@@ -258,175 +395,115 @@ export function TutorPanel({
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className="tutor panel">
-        <div className="tutor-heading">
-          <div className="panel-heading">
-            <span className="tutor-avatar">✳</span>
-            <div>
-              <h2>Aprende con Docta</h2>
-              <p>Una pregunta, una pista, un paso más.</p>
-            </div>
+      <ThreadPrimitive.Root className="tutor">
+        <div className="chat-toolbar">
+          <div className="conversation-control">
+            <label htmlFor="conversation-select">Conversación</label>
+            {conversations.length > 0 ? (
+              <div className="select-wrap">
+                <select
+                  id="conversation-select"
+                  value={selected}
+                  disabled={busy || pending || loading || !!retry}
+                  onChange={(event) => selectConversation(event.target.value)}
+                >
+                  {conversations.map((row, index) => (
+                    <option value={row.id} key={row.id}>
+                      {new Date(row.created_at).toLocaleDateString("es-CL")} ·
+                      Conversación {conversations.length - index}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={15} aria-hidden="true" />
+              </div>
+            ) : (
+              <span>Nueva conversación</span>
+            )}
           </div>
           <button
-            className="quiet"
+            className="secondary-button compact-button"
             disabled={busy || pending || loading || !!retry}
             onClick={newConversation}
           >
-            ＋ Nueva conversación
+            <MessageSquarePlus size={16} />
+            <span>Nueva</span>
           </button>
         </div>
-        {conversations.length > 0 && (
-          <div className="conversation-picker">
-            <label htmlFor="conversation-select">Conversación</label>
-            <select
-              id="conversation-select"
-              value={selected}
-              disabled={busy || pending || loading || !!retry}
-              onChange={(event) => selectConversation(event.target.value)}
-            >
-              {conversations.map((row, index) => (
-                <option value={row.id} key={row.id}>
-                  {new Date(row.created_at).toLocaleDateString("es-CL")} ·
-                  Conversación {conversations.length - index}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        <ThreadPrimitive.Viewport className="thread-body">
+        <ThreadPrimitive.Viewport
+          className={`thread-body ${!loading && messages.length === 0 ? "empty-thread" : ""}`}
+        >
           {loading ? (
-            <p className="empty" role="status">
-              Recuperando la conversación…
-            </p>
-          ) : (
-            messages.length === 0 && (
-              <div className="thread-welcome">
-                <span className="welcome-star">✳</span>
-                <h3>
-                  Hagamos espacio
-                  <br />
-                  para tus preguntas.
-                </h3>
-                <p>
-                  Cuéntame qué concepto estás revisando o qué paso te cuesta
-                  entender. Buscaremos una pista en el material del curso.
-                </p>
-                <div className="study-prompts">
-                  <span>Comprender un concepto</span>
-                  <span>Revisar un procedimiento</span>
-                  <span>Encontrar una pista</span>
-                </div>
-              </div>
-            )
-          )}
-          {messages.map((message) => (
-            <article className="turn" key={message.id}>
-              <div className="student-message">
-                <span className="message-label">TÚ</span>
-                <p>{message.question}</p>
-              </div>
-              {message.state === "pending" && (
-                <p className="pending-state" role="status">
-                  <span className="pulse" />
-                  {phase || "Pregunta guardada. El tutor está trabajando…"}
-                </p>
-              )}
-              {message.state === "failed" && (
-                <div className="failed-message" role="alert">
-                  <strong>No pudimos completar esta respuesta</strong>
-                  <p>
-                    {humanError(
-                      new DoctaError(message.failure_code ?? "INTERNAL_ERROR"),
-                    )}
-                  </p>
-                </div>
-              )}
-              {message.state === "completed" && message.response && (
-                <div className="assistant-message">
-                  <span className="message-label">
-                    ✳ DOCTA{" "}
-                    {message.response.mode === "abstain" && (
-                      <span className="abstention-label">
-                        · Evidencia insuficiente
-                      </span>
-                    )}
-                  </span>
-                  <p className="answer-text">{message.response.answer}</p>
-                  {message.response.citations.length > 0 && (
-                    <div className="citations">
-                      <span className="citation-label">
-                        EN EL MATERIAL DEL CURSO
-                      </span>
-                      {message.response.citations.map((citation) => (
-                        <details key={citation.chunk_id} className="citation">
-                          <summary>
-                            <span>▤ {citation.document_title}</span>
-                            <span>
-                              Pág. {citation.page}
-                              {citation.page_end !== citation.page
-                                ? `–${citation.page_end}`
-                                : ""}{" "}
-                              ↗
-                            </span>
-                          </summary>
-                          <blockquote>{citation.quote}</blockquote>
-                          <small>
-                            Fragmento {citation.fragment} · Versión{" "}
-                            {citation.document_version_id}
-                          </small>
-                        </details>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </article>
-          ))}
-        </ThreadPrimitive.Viewport>
-        <div className="composer-area">
-          {!course.active_corpus_version_id && (
-            <p className="notice">
-              El docente debe publicar un PDF para comenzar a estudiar.
-            </p>
-          )}
-          {error && (
-            <div className="notice error" role="alert">
-              {error}{" "}
-              {retry && (
-                <button
-                  disabled={busy}
-                  onClick={() => send(retry.question, retry.key)}
-                >
-                  Recuperar envío
-                </button>
-              )}{" "}
-              <a href="/auth/login">Iniciar sesión</a>
+            <div className="message-skeleton" role="status">
+              <span className="skeleton skeleton-line" />
+              <span className="skeleton skeleton-line short" />
             </div>
-          )}
-          {busy && !pending && (
-            <p className="inline-status" role="status">
-              {phase}
-            </p>
-          )}
-          <ComposerPrimitive.Root className="composer">
-            <ComposerPrimitive.Input
-              aria-label="Tu pregunta"
-              placeholder="¿Qué te gustaría comprender?"
-              maxLength={4000}
-              rows={2}
-            />
-            <ComposerPrimitive.Send
-              className="send-button"
-              aria-label="Enviar pregunta"
+          ) : null}
+          <ThreadPrimitive.Messages>
+            {({ message }) =>
+              message.role === "user" ? (
+                <StudentMessage />
+              ) : message.role === "assistant" ? (
+                <TutorMessage />
+              ) : null
+            }
+          </ThreadPrimitive.Messages>
+          <ThreadPrimitive.ViewportFooter className="composer-area">
+            {!loading && messages.length === 0 && (
+              <div className="thread-welcome">
+                <h2>¿Cómo puedo ayudarte hoy?</h2>
+              </div>
+            )}
+            <ThreadPrimitive.ScrollToBottom
+              className="scroll-to-bottom"
+              aria-label="Ir al final de la conversación"
             >
-              ↑
-            </ComposerPrimitive.Send>
-          </ComposerPrimitive.Root>
-          <p className="composer-note">
-            Orientación basada en tu material. Abre las citas para revisar las
-            fuentes.
-          </p>
-        </div>
+              <ArrowDown size={16} />
+            </ThreadPrimitive.ScrollToBottom>
+            {!course.active_corpus_version_id && (
+              <p className="notice">
+                El docente debe publicar un PDF para comenzar a estudiar.
+              </p>
+            )}
+            {error && (
+              <div className="notice error" role="alert">
+                {error}{" "}
+                {retry && (
+                  <button
+                    disabled={busy}
+                    onClick={() => send(retry.question, retry.key)}
+                  >
+                    Recuperar envío
+                  </button>
+                )}
+              </div>
+            )}
+            {busy && !pending && (
+              <p className="inline-status" role="status">
+                <LoaderCircle className="spin" size={15} /> {phase}
+              </p>
+            )}
+            <ComposerPrimitive.Root className="composer">
+              <ComposerPrimitive.Input
+                aria-label="Tu pregunta"
+                placeholder="Pregunta sobre el material…"
+                maxLength={4000}
+                rows={1}
+              />
+              <div className="composer-controls">
+                <span className="composer-context">
+                  <BookOpen size={14} />
+                  Material del curso
+                </span>
+                <ComposerPrimitive.Send
+                  className="send-button"
+                  aria-label="Enviar pregunta"
+                >
+                  <ArrowUp size={16} strokeWidth={2} />
+                </ComposerPrimitive.Send>
+              </div>
+            </ComposerPrimitive.Root>
+          </ThreadPrimitive.ViewportFooter>
+        </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
   );
