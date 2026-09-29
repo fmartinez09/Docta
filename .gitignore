@@ -21,6 +21,7 @@ Thumbs.db
 
 # Generated local development credentials and provisioning state.
 .devcontainer/.env
+.devcontainer/.environment.lock
 .devcontainer/state/
 .tmp/devcontainer-*.log
 tmp/dev-*/

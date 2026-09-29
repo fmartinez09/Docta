@@ -9,15 +9,19 @@
   },
   "runArgs": ["--network=host"],
   "remoteUser": "vscode",
-  "containerEnv": { "UV_CACHE_DIR": "/home/vscode/.cache/uv" },
+  "containerEnv": {
+    "UV_CACHE_DIR": "/home/vscode/.cache/uv",
+    "DOCTA_DEV_HOME": "/var/lib/docta-dev"
+  },
   "mounts": [
+    "source=docta-dev-state,target=/var/lib/docta-dev,type=volume",
     "source=docta-venv-${devcontainerId},target=${containerWorkspaceFolder}/.venv,type=volume",
     "source=docta-node-${devcontainerId},target=${containerWorkspaceFolder}/node_modules,type=volume",
     "source=docta-web-node-${devcontainerId},target=${containerWorkspaceFolder}/apps/web/node_modules,type=volume",
     "source=docta-next-${devcontainerId},target=${containerWorkspaceFolder}/apps/web/.next,type=volume"
   ],
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "postStartCommand": "uv run --frozen python scripts/dev.py post-start",
+  "postStartCommand": "uv run --frozen python -m scripts.dev post-start",
   "waitFor": "postCreateCommand",
   "customizations": {
     "vscode": {

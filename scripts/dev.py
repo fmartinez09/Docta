@@ -18,13 +18,19 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
+import psycopg
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from dotenv import dotenv_values
+from jwt import PyJWK
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from docta_api.config import Settings
+from scripts.dev_state import StateError, environment_lock, migrate_legacy, profile_directory
 
 ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = ROOT
 LEGACY_APP_NAME = "Docta public PKCE"
 PORT_DEFAULTS = {
     "DOCTA_DEV_WEB_PORT": "13000",
@@ -37,6 +43,16 @@ PORT_DEFAULTS = {
     "MINIO_CONSOLE_PORT": "19001",
 }
 TUTOR_FIELDS = ("DOCTA_TUTOR_ENDPOINT_URL", "DOCTA_TUTOR_MODEL", "DOCTA_TUTOR_API_KEY")
+
+
+def profile_path(name: str, root: Path | None = None) -> Path:
+    selected_root = ROOT if root is None else root
+    profile = (
+        profile_directory(selected_root)
+        if selected_root == REPOSITORY_ROOT
+        else selected_root / ".devcontainer"
+    )
+    return profile / name
 
 
 class DevError(Exception):
@@ -271,7 +287,7 @@ def new_environment(root: Path) -> dict[str, str]:
 
 def guard_environment_creation(root: Path = ROOT) -> None:
     """A missing ignored environment does not imply that Docker data is new."""
-    if (root / ".devcontainer/.env").is_file():
+    if (profile_path(".env", root)).is_file():
         return
     try:
         result = subprocess.run(
@@ -302,7 +318,7 @@ def guard_environment_creation(root: Path = ROOT) -> None:
 
 
 def initialize(root: Path = ROOT) -> dict[str, str]:
-    path = root / ".devcontainer/.env"
+    path = profile_path(".env", root)
     if not path.is_file():
         raise DevError("Run npm run dev:configure inside the container to configure development.")
     values = normalize_environment(read_environment(path))
@@ -412,7 +428,18 @@ def configure_tutor(values: dict[str, str], *, existing: bool) -> dict[str, str]
 
 
 def show_status(values: dict[str, str]) -> None:
-    print("Private configuration: .devcontainer/.env; recovery state: .devcontainer/state/.")
+    print(
+        f"Private configuration: {profile_path('.env')}; "
+        f"recovery state: {profile_path('state')}."
+    )
+    print(
+        "Managed profile: "
+        + (
+            "OIDC registration recorded (public availability is checked by dev:all)."
+            if values.get("DOCTA_WEB_OIDC_CLIENT_ID")
+            else "OIDC registration pending; run npm run dev:setup."
+        )
+    )
     print(
         f"Web: {values['DOCTA_WEB_ORIGIN']}; API: {values['DOCTA_API_BASE_URL']}; "
         f"ZITADEL: {values['DOCTA_OIDC_ISSUER']}/ui/console."
@@ -443,8 +470,22 @@ def show_status(values: dict[str, str]) -> None:
     )
 
 
+def show_services() -> None:
+    for project in ("docta-dev-iam", "docta-dev"):
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "--all", "--filter", f"label=com.docker.compose.project={project}",
+                 "--format", '{{.Label "com.docker.compose.service"}}: {{.Status}}'],
+                capture_output=True, text=True, timeout=10, check=True,
+                env=process_environment({}),
+            )
+            print(f"{project}:\n{result.stdout.strip() or 'No containers; run npm run dev:setup.'}")
+        except (OSError, subprocess.SubprocessError):
+            print(f"{project}: Docker status unavailable.")
+
+
 def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str]:
-    path = root / ".devcontainer/.env"
+    path = profile_path(".env", root)
     if source is not None:
         if path.exists():
             raise DevError("A managed environment already exists; import cannot replace it.")
@@ -516,7 +557,7 @@ def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str
     if existing:
         original = path.read_text(encoding="utf-8")
         private_write(
-            root / ".devcontainer/state" / ("env-before-configure-" + secrets.token_hex(8)),
+            profile_path("state", root) / ("env-before-configure-" + secrets.token_hex(8)),
             original,
         )
     else:
@@ -527,7 +568,7 @@ def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str
             original, values, remove=tuple(key for key in TUTOR_FIELDS if key not in values)
         ),
     )
-    print("Configuration saved; services/model calls were not started. Run npm run dev:all.")
+    print("Configuration saved; no services/model calls started. Run npm run dev:setup first.")
     show_status(values)
     return values
 
@@ -539,14 +580,11 @@ def run(
     quiet: bool = False,
     inherit_identity: bool = True,
 ) -> None:
-    environment = dict(os.environ)
-    if not inherit_identity or values.get("DOCTA_DEV_MANAGED") == "1":
-        environment = {
-            key: value for key, value in environment.items() if not key.startswith("DOCTA_")
-        }
+    environment = process_environment(values, clean=not inherit_identity
+                                      or values.get("DOCTA_DEV_MANAGED") == "1")
     try:
         subprocess.run(
-            command, cwd=ROOT, env=environment | values, check=True, capture_output=quiet, text=True
+            command, cwd=ROOT, env=environment, check=True, capture_output=quiet, text=True
         )
     except (OSError, subprocess.CalledProcessError) as error:
         raise DevError(
@@ -554,12 +592,44 @@ def run(
         ) from error
 
 
+def process_environment(values: dict[str, str], *, clean: bool = True) -> dict[str, str]:
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not clean or not key.startswith(("DOCTA_", "POSTGRES_", "MINIO_", "ZITADEL_"))
+    }
+    return environment | values
+
+
+def runtime_values(values: dict[str, str], component: str = "api") -> dict[str, str]:
+    """IAM administration credentials belong only to development provisioning."""
+    allowed = {"DOCTA_" + name.upper() for name in Settings.model_fields}
+    if component == "worker":
+        allowed = {key for key in allowed if not key.startswith(("DOCTA_OIDC_", "DOCTA_TUTOR_"))}
+    elif component == "web":
+        allowed = {
+            "DOCTA_API_BASE_URL", "DOCTA_WEB_ORIGIN", "DOCTA_WEB_SESSION_SECRET",
+            "DOCTA_WEB_OIDC_CLIENT_ID", "DOCTA_WEB_OIDC_SCOPES",
+            "DOCTA_OIDC_ISSUER", "DOCTA_OIDC_AUDIENCE",
+        }
+    elif component == "migration":
+        allowed = {"DOCTA_DATABASE_URL", "DOCTA_MINIO_HEALTH_URL"}
+    elif component == "helper":
+        allowed = {"DOCTA_API_BASE_URL", "DOCTA_OIDC_ISSUER", "DOCTA_OIDC_AUDIENCE",
+                   "DOCTA_OIDC_JWKS_URL"}
+        allowed |= {key for key in values if key.startswith("DOCTA_DEV_OIDC_")}
+    return {key: value for key, value in values.items() if key in allowed} | {
+        "DOCTA_DEV_MANAGED": "1"
+    }
+
+
 def compose(stack: str) -> list[str]:
-    base = ["docker", "compose", "--env-file", str(ROOT / ".devcontainer/.env")]
+    if stack == "test":
+        return [
+            "docker", "compose", "-p", "docta-test", "-f", str(ROOT / "infra/compose.test.yaml")
+        ]
+    base = ["docker", "compose", "--env-file", str(profile_path(".env"))]
     if stack == "iam":
         return [*base, "-p", "docta-dev-iam", "-f", str(ROOT / ".devcontainer/zitadel.yaml")]
-    if stack == "test":
-        return [*base, "-p", "docta-test", "-f", str(ROOT / "infra/compose.test.yaml")]
     return [
         *base,
         "-p",
@@ -815,7 +885,7 @@ def start_iam(values: dict[str, str]) -> None:
             result = subprocess.run(
                 [*compose("iam"), "logs", "--no-color", "--tail", "50", "zitadel-api"],
                 cwd=ROOT,
-                env=os.environ | values,
+                env=process_environment(values),
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -841,7 +911,7 @@ def bootstrap(values: dict[str, str], *, recover_identity: bool = False) -> dict
         "Starting isolated ZITADEL (first image pull/setup can take several minutes)...", flush=True
     )
     start_iam(values)
-    state_dir = ROOT / ".devcontainer/state"
+    state_dir = profile_path("state")
     state_dir.mkdir(parents=True, exist_ok=True)
     pat_path = state_dir / "admin.pat"
     run(
@@ -861,19 +931,117 @@ def bootstrap(values: dict[str, str], *, recover_identity: bool = False) -> dict
         follow_redirects=False,
     ) as client:
         updates = Provisioner(
-            client, state_dir / "identity.json", env_path=ROOT / ".devcontainer/.env"
+            client, state_dir / "identity.json", env_path=profile_path(".env")
         ).provision(values, recover_identity=recover_identity)
-    update_env(ROOT / ".devcontainer/.env", updates)
+    update_env(profile_path(".env"), updates)
     values |= updates
     print("Starting isolated PostgreSQL, Redis and MinIO; applying migrations...", flush=True)
     run([*compose("infra"), "up", "-d", "--wait"], values, quiet=True)
-    run([sys.executable, "-m", "alembic", "-c", "apps/api/alembic.ini", "upgrade", "head"], values)
+    run([sys.executable, "-m", "alembic", "-c", "apps/api/alembic.ini", "upgrade", "head"],
+        runtime_values(values, "migration"), quiet=True)
     print("Infrastructure ready. Start servers with npm run dev:all.")
     show_status(values)
     return values
 
 
-def serve(values: dict[str, str]) -> None:
+def registered_identity(values: dict[str, str]) -> None:
+    project = values.get("DOCTA_OIDC_AUDIENCE")
+    client = values.get("DOCTA_WEB_OIDC_CLIENT_ID")
+    if not project or not client:
+        raise DevError("OIDC is not registered. Run npm run dev:setup before dev:all.")
+    if (project != values.get("DOCTA_DEV_OIDC_PROJECT_ID")
+            or client != values.get("DOCTA_DEV_OIDC_CLIENT_ID")):
+        raise DevError("Saved OIDC configuration disagrees. Run npm run dev:setup.")
+
+
+def verify_oidc(values: dict[str, str]) -> None:
+    """Only public discovery and signing keys; daily startup never needs an admin PAT."""
+    try:
+        with httpx.Client(timeout=10, trust_env=False, follow_redirects=False) as client:
+            response = client.get(values["DOCTA_OIDC_ISSUER"] + "/.well-known/openid-configuration")
+            response.raise_for_status()
+            document = response.json()
+            if not isinstance(document, dict):
+                raise ValueError
+            code_methods = document.get("code_challenge_methods_supported")
+            auth_methods = document.get("token_endpoint_auth_methods_supported")
+            if (document.get("issuer") != values["DOCTA_OIDC_ISSUER"]
+                    or document.get("jwks_uri") != values["DOCTA_OIDC_JWKS_URL"]
+                    or not isinstance(code_methods, list)
+                    or not all(isinstance(item, str) for item in code_methods)
+                    or "S256" not in code_methods
+                    or not isinstance(auth_methods, list)
+                    or not all(isinstance(item, str) for item in auth_methods)
+                    or "none" not in auth_methods):
+                raise ValueError
+            response = client.get(values["DOCTA_OIDC_JWKS_URL"])
+            response.raise_for_status()
+            jwks = response.json()
+            keys = jwks.get("keys") if isinstance(jwks, dict) else None
+            usable_key = False
+            if isinstance(keys, list):
+                for key in keys:
+                    if not isinstance(key, dict) or key.get("kty") != "RSA":
+                        continue
+                    if not isinstance(key.get("kid"), str) or not key["kid"]:
+                        continue
+                    try:
+                        PyJWK.from_dict(key)
+                    except Exception:
+                        continue
+                    usable_key = True
+                    break
+            if not usable_key:
+                raise ValueError
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        raise DevError("IAM discovery/signing keys are unavailable or incompatible. "
+                       "Check the provider; no identity was changed.") from None
+
+
+def verify_schema(values: dict[str, str]) -> None:
+    scripts = ScriptDirectory.from_config(Config(str(ROOT / "apps/api/alembic.ini")))
+    expected = set(scripts.get_heads())
+    try:
+        with psycopg.connect(values["DOCTA_DATABASE_URL"], connect_timeout=5) as connection:
+            actual = {
+                row[0] for row in connection.execute("SELECT version_num FROM alembic_version")
+            }
+    except psycopg.Error:
+        raise DevError("Cannot verify the database schema. Check PostgreSQL and run "
+                       "npm run dev:setup if this environment has not been prepared.") from None
+    if actual != expected:
+        raise DevError(
+            "Database schema does not match this checkout. Stop applications and "
+            "run npm run dev:setup from a compatible branch; no downgrade was attempted."
+        )
+
+
+def start_existing(values: dict[str, str]) -> None:
+    registered_identity(values)
+    for stack, project, required in (
+        ("iam", "docta-dev-iam", {"proxy", "postgres", "zitadel-api", "zitadel-login"}),
+        ("infra", "docta-dev", {"postgres", "redis", "minio"}),
+    ):
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "--all", "--filter", f"label=com.docker.compose.project={project}",
+                 "--format", '{{.Label "com.docker.compose.service"}}'],
+                capture_output=True, text=True, timeout=15, check=True,
+                env=process_environment({}),
+            )
+        except (OSError, subprocess.SubprocessError):
+            raise DevError(
+                "Cannot inspect development services. Check Docker availability."
+            ) from None
+        if not required.issubset(result.stdout.splitlines()):
+            raise DevError("Development containers are missing. Run npm run dev:setup; "
+                           "existing configuration and volumes will be reused.")
+        run([*compose(stack), "start", "--wait", "--wait-timeout", "120"], values, quiet=True)
+    verify_oidc(values)
+    verify_schema(values)
+
+
+def serve(values: dict[str, str], *, lock_descriptor: int) -> None:
     commands = [
         [
             sys.executable,
@@ -906,18 +1074,14 @@ def serve(values: dict[str, str]) -> None:
     ]
     processes: list[subprocess.Popen] = []
     try:
-        for command in commands:
+        for command, component in zip(commands, ("api", "worker", "web"), strict=True):
             processes.append(
                 subprocess.Popen(
                     command,
                     cwd=ROOT,
-                    env={
-                        key: value
-                        for key, value in os.environ.items()
-                        if not key.startswith("DOCTA_")
-                    }
-                    | values,
+                    env=process_environment(runtime_values(values, component)),
                     start_new_session=True,
+                    pass_fds=(lock_descriptor,),
                 )
             )
         while True:
@@ -966,7 +1130,8 @@ def check(values: dict[str, str], *, full: bool) -> None:
             key: value for key, value in test_values.items() if key.startswith("DOCTA_TEST_")
         }
         run([*compose("test"), "up", "-d", "--wait"], values | test_overrides, quiet=True)
-        run([*compose("infra"), "--profile", "worker", "build", "worker"], values)
+        run(["docker", "build", "-f", "infra/worker.Dockerfile", "-t", "docta-worker:latest", "."],
+            test_values, inherit_identity=False)
         run(
             [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"],
             test_values,
@@ -990,39 +1155,58 @@ def main() -> int:
     execute.add_argument("command", nargs=argparse.REMAINDER, help="Command after run --")
     args = parser.parse_args()
     try:
-        if args.action in ("configure", "init"):
-            configure(source=args.from_env)
+        if args.action in ("post-start", "status"):
+            if profile_path(".env").is_file():
+                show_status(initialize())
+                print("Start this checkout with npm run dev:all. Use dev:setup for migrations.")
+            else:
+                print("Tools ready. Run npm run dev:setup in an interactive terminal. "
+                      "Existing checkout configuration will be preserved and imported if present.")
+            if args.action == "status":
+                show_services()
             return 0
-        if args.action == "post-start" and not (ROOT / ".devcontainer/.env").is_file():
-            print(
-                "Tools installed. Run npm run dev:configure, then npm run dev:all. "
-                "If development volumes exist, restore their original private configuration first."
-            )
+        if args.action == "check":
+            check(initialize(), full=args.full)
             return 0
-        guard_environment_creation()
-        values = initialize()
-        if args.action in ("bootstrap", "post-start"):
-            bootstrap(values)
-        elif args.action == "recover-identity":
-            bootstrap(values, recover_identity=True)
-        elif args.action == "status":
-            show_status(values)
-        elif args.action == "start":
-            serve(bootstrap(values))
-        elif args.action == "stop":
-            for stack in ("infra", "iam"):
-                run([*compose(stack), "down"], values, quiet=True)
-        elif args.action == "check":
-            check(values, full=args.full)
-        elif args.action == "run":
+        if args.action == "run":
             command = args.command[1:] if args.command[:1] == ["--"] else args.command
             if not command:
                 raise DevError("Specify a command after run --.")
-            run(command, values)
+            command_values = initialize()
+            safe_values = (
+                runtime_values(command_values, "helper")
+                if command_values.get("DOCTA_DEV_MANAGED") == "1"
+                else command_values
+            )
+            run(command, safe_values)
+            return 0
+        with environment_lock(profile_directory(ROOT)) as descriptor:
+            if args.action in ("configure", "init", "bootstrap", "recover-identity"):
+                if migrate_legacy(ROOT):
+                    print("Imported the original managed configuration and identity state; "
+                          "checkout files were preserved.")
+            if args.action in ("configure", "init"):
+                configure(source=args.from_env)
+                return 0
+            guard_environment_creation()
+            if args.action == "bootstrap" and not profile_path(".env").is_file():
+                configure()
+            values = initialize()
+            if args.action == "bootstrap":
+                bootstrap(values)
+            elif args.action == "recover-identity":
+                bootstrap(values, recover_identity=True)
+            elif args.action == "start":
+                start_existing(values)
+                serve(values, lock_descriptor=descriptor)
+            elif args.action == "stop":
+                for stack in ("infra", "iam"):
+                    run([*compose(stack), "stop"], values, quiet=True)
         return 0
-    except (DevError, OSError, ValueError, KeyError, EOFError) as error:
+    except (DevError, StateError, OSError, ValueError, KeyError, EOFError) as error:
         print(
-            str(error) if isinstance(error, DevError) else "Invalid local setup/state; preserved.",
+            str(error) if isinstance(error, (DevError, StateError))
+            else "Invalid local setup/state; preserved.",
             file=sys.stderr,
         )
         return 1
