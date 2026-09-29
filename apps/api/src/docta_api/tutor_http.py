@@ -7,6 +7,10 @@ import httpx
 
 from docta_api.rag import RAGFailure, TutorDraft, TutorRequest
 
+GOOGLE_COMPAT_CHAT_COMPLETIONS = (
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+)
+
 SYSTEM_POLICY = (
     """Eres Docta, un tutor pedagógico que responde en español usando las fuentes actuales.
 Para una pregunta de definición o comprensión, da una explicación de 2 a 4 frases basada en fuentes.
@@ -97,7 +101,6 @@ class ChatCompletionsTutorModel:
                 {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
             ],
             "stream": False,
-            "store": False,
             "max_completion_tokens": self._max_output_tokens,
             "response_format": {
                 "type": "json_schema",
@@ -108,6 +111,10 @@ class ChatCompletionsTutorModel:
                 },
             },
         }
+        # Gemini's OpenAI-compatible endpoint rejects `store`, including false.
+        # Other configured providers retain the explicit no-store request.
+        if self._endpoint != GOOGLE_COMPAT_CHAT_COMPLETIONS:
+            payload["store"] = False
         if self._provider == "unsloth":
             # Explicit Studio extensions from its published ChatCompletionRequest contract.
             # All responses still pass local validation before persistence or delivery.

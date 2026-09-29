@@ -283,9 +283,14 @@ DOCTA_TUTOR_SCHEMA_PROFILE=standard
 
 When switching from Unsloth/llama.cpp, change both provider and schema profile as shown; do not
 retain Studio-only generation parameters. The model ID depends on the selected service/account.
-Google documents structured outputs, but this configuration example is not evidence of a live
-Gemini test. Keep the existing local response/citation validation and do not send course material
+Google documents structured outputs; configuration alone does not verify a live request or model
+quality. Keep the existing local response/citation validation and do not send course material
 to a remote service implicitly. Locked tests use deterministic providers and dedicated resources.
+Gemini's compatibility endpoint rejects the optional `store` request field; the adapter omits it
+only for that endpoint. An [HTTP 503](https://ai.google.dev/gemini-api/docs/troubleshooting)
+can still mean Gemini is temporarily unavailable. Docta keeps
+the original question and does not automatically repeat an ambiguous model call. Browser-extension
+console errors do not diagnose the tutor; use the saved message's `failure_code`.
 
 | Setting | Default / bounds |
 | --- | --- |

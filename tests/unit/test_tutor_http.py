@@ -14,9 +14,9 @@ def tutor_request():
     return make_tutor_request()
 
 
-def adapter(handler):
+def adapter(handler, *, endpoint="https://model.test/v1/chat/completions"):
     return ChatCompletionsTutorModel(
-        endpoint="https://model.test/v1/chat/completions",
+        endpoint=endpoint,
         model="configured-test-model",
         api_key="test-secret",
         timeout_seconds=1,
@@ -121,6 +121,23 @@ async def test_adapter_sends_bounded_nonstreaming_structured_contract(tutor_requ
         )
 
     assert await adapter(handler).generate(tutor_request) == draft
+
+
+@pytest.mark.anyio
+async def test_gemini_compatibility_omits_unsupported_store(tutor_request):
+    def handler(request):
+        payload = json.loads(request.content)
+        assert "store" not in payload
+        assert payload["stream"] is False
+        assert payload["response_format"]["type"] == "json_schema"
+        assert payload["max_completion_tokens"] == 512
+        return httpx.Response(503, text="private provider payload")
+
+    with pytest.raises(RAGFailure, match=r"^MODEL_UNAVAILABLE$"):
+        await adapter(
+            handler,
+            endpoint="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        ).generate(tutor_request)
 
 
 @pytest.mark.anyio
