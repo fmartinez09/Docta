@@ -87,7 +87,7 @@ def test_volume_inspection_failure_does_not_generate_environment(tmp_path, monke
     assert not (tmp_path / ".devcontainer").exists()
 
 
-def test_cli_guards_missing_environment_before_initialization(monkeypatch, capsys):
+def test_cli_guards_missing_environment_before_initialization(monkeypatch, capsys, tmp_path):
     def reject():
         raise dev.DevError("Existing volumes require original configuration")
 
@@ -95,7 +95,9 @@ def test_cli_guards_missing_environment_before_initialization(monkeypatch, capsy
         pytest.fail("Credentials must not be generated after a failed guard")
 
     monkeypatch.setattr(dev, "guard_environment_creation", reject)
+    monkeypatch.setattr(dev, "migrate_legacy", lambda root: False)
     monkeypatch.setattr(dev, "initialize", unexpected)
+    monkeypatch.setenv("DOCTA_DEV_HOME", str(tmp_path / "private-state"))
     monkeypatch.setattr(dev.sys, "argv", ["dev.py", "bootstrap"])
     assert dev.main() == 1
     assert "Existing volumes require original configuration" in capsys.readouterr().err

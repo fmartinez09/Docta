@@ -80,6 +80,12 @@ OIDC Web application, starts PostgreSQL, Redis, and MinIO, and applies migration
 start the API, worker, or web development servers; `dev:all` does that after setup succeeds.
 No LLM request is made during setup.
 
+If a checkout already contains an old managed `.devcontainer/.env`, setup imports those existing
+credentials and identity into the shared profile. It then reuses the matching service volumes,
+so the first-run questions are skipped. `dev:status` shows which profile is active. Choosing new
+infrastructure credentials requires a genuinely new environment with no existing Docta data
+volumes; editing the imported passwords does not change passwords held by the services.
+
 The assistant is intentionally developer-controlled. The generated values are defaults, not
 mandatory credentials. Press Enter to accept a displayed default. Secret prompts are hidden;
 press Enter there to keep the generated secret. You may choose your own administrator login and
@@ -123,6 +129,8 @@ current checkout, and runs the API, ingestion worker, and web application. It do
 IAM resources and does not run migrations. If containers are missing or the schema belongs to a
 different branch, it stops with an actionable error; run `npm run dev:setup` from a compatible
 checkout.
+Already healthy containers are reused without a Compose restart. A failed start reports which
+stack and service state needs inspection, without printing private Docker logs.
 
 The three application processes stay attached to this command. Press Ctrl+C to stop them, then
 stop the managed infrastructure when needed:
@@ -275,6 +283,9 @@ The assistant supports `google`, `llama_cpp`, `unsloth`, `custom`, and `none`. A
 does not select a developer model or credential: enter the full endpoint, model/server alias, and
 hidden API key. Custom services also ask for the provider and schema profile. Local services still
 need a nonempty key value for the current adapter contract.
+Enter the model ID in the model prompt, then the credential in the hidden API key prompt. When
+editing an existing profile with the same endpoint, Enter at the API key prompt keeps its saved
+key; typing a new key replaces it in the private profile.
 
 The default limits are a 45-second tutor timeout, a 90-second message deadline, and a 2,000-token
 completion budget. The tutor timeout must remain below the message deadline. Restart `dev:all`
@@ -352,6 +363,8 @@ Common cases:
   password. Restore the matching managed profile and `DOCTA_DEV_IAM_MASTERKEY`.
 - **OIDC discovery or signing keys unavailable**: check Docker health and the issuer address; no
   identity mutation is performed by `dev:all`.
+- **Cannot start a managed stack**: use `npm run dev:status` to see the affected service states,
+  then inspect that stack's Docker health checks. The command preserves configuration and volumes.
 - **Schema mismatch**: stop API/worker/web and run `npm run dev:setup` from a compatible branch.
   The setup flow applies upgrades and never downgrades a database.
 - **Port already in use**: on a fresh profile choose custom ports in the assistant. Existing

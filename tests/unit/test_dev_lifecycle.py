@@ -1,3 +1,4 @@
+import subprocess
 from typing import ClassVar
 
 import pytest
@@ -49,6 +50,58 @@ def test_daily_start_rejects_unregistered_identity_before_touching_docker(monkey
     monkeypatch.setattr(dev.subprocess, "run", unexpected)
     with pytest.raises(dev.DevError, match="OIDC is not registered"):
         dev.start_existing({"DOCTA_DEV_MANAGED": "1"})
+
+
+def _registered_values():
+    return {
+        "DOCTA_OIDC_AUDIENCE": "project",
+        "DOCTA_DEV_OIDC_PROJECT_ID": "project",
+        "DOCTA_WEB_OIDC_CLIENT_ID": "client",
+        "DOCTA_DEV_OIDC_CLIENT_ID": "client",
+    }
+
+
+def test_daily_start_skips_compose_start_when_services_are_already_healthy(monkeypatch):
+    inspected = []
+
+    def docker_ps(command, **kwargs):
+        project = command[command.index("--filter") + 1].rsplit("=", 1)[1]
+        inspected.append(project)
+        services = (
+            ("proxy", "postgres", "zitadel-api", "zitadel-login")
+            if project == "docta-dev-iam" else ("postgres", "redis", "minio")
+        )
+        output = "".join(f"{service}|running|Up 2 minutes (healthy)\n" for service in services)
+        return subprocess.CompletedProcess(command, 0, stdout=output)
+
+    monkeypatch.setattr(dev.subprocess, "run", docker_ps)
+    monkeypatch.setattr(dev, "run", lambda *args, **kwargs: pytest.fail("unexpected start"))
+    monkeypatch.setattr(dev, "verify_oidc", lambda values: None)
+    monkeypatch.setattr(dev, "verify_schema", lambda values: None)
+    dev.start_existing(_registered_values())
+    assert inspected == ["docta-dev-iam", "docta-dev"]
+
+
+def test_daily_start_reports_failing_stack_without_docker_output(monkeypatch):
+    outputs = iter([
+        "proxy|exited|Exited (1)\npostgres|running|Up (healthy)\n"
+        "zitadel-api|running|Up (healthy)\nzitadel-login|running|Up (healthy)\n",
+        "proxy|exited|Exited (1)\npostgres|running|Up (healthy)\n"
+        "zitadel-api|running|Up (healthy)\nzitadel-login|running|Up (healthy)\n",
+    ])
+
+    def docker_ps(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=next(outputs))
+
+    def failed_start(*args, **kwargs):
+        raise dev.DevError("private password and provider payload")
+
+    monkeypatch.setattr(dev.subprocess, "run", docker_ps)
+    monkeypatch.setattr(dev, "run", failed_start)
+    with pytest.raises(dev.DevError, match="Cannot start docta-dev-iam") as error:
+        dev.start_existing(_registered_values())
+    assert "proxy=exited" in str(error.value)
+    assert "private password" not in str(error.value)
 
 
 class _Response:

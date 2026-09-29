@@ -365,14 +365,17 @@ def prompt(label: str, default: str = "", *, choices: tuple[str, ...] = ()) -> s
         print("Enter a valid value" + (": " + ", ".join(choices) if choices else "") + ".")
 
 
-def prompt_secret(label: str, default: str = "") -> str:
+def prompt_secret(label: str, default: str = "", *, existing: bool = False) -> str:
     import warnings
 
     while True:
         with warnings.catch_warnings():
             warnings.simplefilter("error", getpass.GetPassWarning)
             try:
-                suffix = " [Enter keeps/generated secret]" if default else ""
+                suffix = (
+                    " [Enter keeps existing secret]" if existing
+                    else " [Enter accepts generated secret]" if default else ""
+                )
                 value = getpass.getpass(label + suffix + ": ")
             except getpass.GetPassWarning as error:
                 raise DevError("This terminal does not support hidden secret input.") from error
@@ -405,11 +408,13 @@ def configure_tutor(values: dict[str, str], *, existing: bool) -> dict[str, str]
         else ""
     )
     values["DOCTA_TUTOR_ENDPOINT_URL"] = prompt("Full Chat Completions endpoint", endpoint)
-    values["DOCTA_TUTOR_MODEL"] = prompt("Model ID / server alias")
+    values["DOCTA_TUTOR_MODEL"] = prompt("Model ID / server alias (not an API key)")
     same_endpoint = values["DOCTA_TUTOR_ENDPOINT_URL"] == old.get("DOCTA_TUTOR_ENDPOINT_URL")
+    existing_key = old.get("DOCTA_TUTOR_API_KEY", "") if same_endpoint else ""
     values["DOCTA_TUTOR_API_KEY"] = prompt_secret(
         "Tutor API key (local servers still require an explicit value)",
-        old.get("DOCTA_TUTOR_API_KEY", "") if same_endpoint else "",
+        existing_key,
+        existing=bool(existing_key),
     )
     if profile == "custom":
         values["DOCTA_TUTOR_PROVIDER"] = prompt(
@@ -568,7 +573,8 @@ def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str
             original, values, remove=tuple(key for key in TUTOR_FIELDS if key not in values)
         ),
     )
-    print("Configuration saved; no services/model calls started. Run npm run dev:setup first.")
+    next_command = "npm run dev:all" if existing else "npm run dev:setup"
+    print(f"Configuration saved; no services/model calls started. Run {next_command}.")
     show_status(values)
     return values
 
@@ -1016,27 +1022,63 @@ def verify_schema(values: dict[str, str]) -> None:
         )
 
 
+def service_states(project: str) -> dict[str, str]:
+    """Read only Docker's service state; never expose Compose output or configuration."""
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--all", "--filter", f"label=com.docker.compose.project={project}",
+             "--format", '{{.Label "com.docker.compose.service"}}|{{.State}}|{{.Status}}'],
+            capture_output=True, text=True, timeout=15, check=True,
+            env=process_environment({}),
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise DevError("Cannot inspect development services. Check Docker availability.") from None
+    states = {}
+    for line in result.stdout.splitlines():
+        parts = line.split("|", 2)
+        if len(parts) != 3:
+            continue
+        service, state, status = parts
+        if state == "running":
+            states[service] = (
+                "unhealthy" if "(unhealthy)" in status
+                else "starting" if "(health: starting)" in status
+                else "healthy" if "(healthy)" in status
+                else "running"
+            )
+        else:
+            states[service] = state if state in {
+                "created", "exited", "dead", "paused", "restarting"
+            } else "unknown"
+    return states
+
+
 def start_existing(values: dict[str, str]) -> None:
     registered_identity(values)
     for stack, project, required in (
         ("iam", "docta-dev-iam", {"proxy", "postgres", "zitadel-api", "zitadel-login"}),
         ("infra", "docta-dev", {"postgres", "redis", "minio"}),
     ):
-        try:
-            result = subprocess.run(
-                ["docker", "ps", "--all", "--filter", f"label=com.docker.compose.project={project}",
-                 "--format", '{{.Label "com.docker.compose.service"}}'],
-                capture_output=True, text=True, timeout=15, check=True,
-                env=process_environment({}),
-            )
-        except (OSError, subprocess.SubprocessError):
-            raise DevError(
-                "Cannot inspect development services. Check Docker availability."
-            ) from None
-        if not required.issubset(result.stdout.splitlines()):
+        states = service_states(project)
+        if not required.issubset(states):
             raise DevError("Development containers are missing. Run npm run dev:setup; "
                            "existing configuration and volumes will be reused.")
-        run([*compose(stack), "start", "--wait", "--wait-timeout", "120"], values, quiet=True)
+        if all(states[service] in {"healthy", "running"} for service in required):
+            continue
+        try:
+            run([*compose(stack), "start", "--wait", "--wait-timeout", "120"],
+                values, quiet=True)
+        except DevError:
+            try:
+                states = service_states(project)
+                details = ", ".join(f"{service}={states.get(service, 'missing')}"
+                                    for service in sorted(required))
+            except DevError:
+                details = "service status unavailable"
+            raise DevError(
+                f"Cannot start {project} ({details}). Run npm run dev:status and inspect "
+                "that stack's Docker health checks; configuration and volumes were preserved."
+            ) from None
     verify_oidc(values)
     verify_schema(values)
 
@@ -1073,6 +1115,11 @@ def serve(values: dict[str, str], *, lock_descriptor: int) -> None:
         ],
     ]
     processes: list[subprocess.Popen] = []
+
+    def stop_on_term(_signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt
+
+    previous_term_handler = signal.signal(signal.SIGTERM, stop_on_term)
     try:
         for command, component in zip(commands, ("api", "worker", "web"), strict=True):
             processes.append(
@@ -1091,6 +1138,7 @@ def serve(values: dict[str, str], *, lock_descriptor: int) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        signal.signal(signal.SIGTERM, previous_term_handler)
         for process in processes:
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGTERM)
