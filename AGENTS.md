@@ -1,3 +1,19 @@
+This repository uses a Dev Container as its canonical development environment.
+
+You may edit files directly from the host workspace.
+
+Do not run project tooling on the host.
+
+Run commands using:
+
+    devcontainer exec --workspace-folder . <command>
+
+Examples:
+
+    devcontainer exec --workspace-folder . npm test
+    devcontainer exec --workspace-folder . npm run lint
+    devcontainer exec --workspace-folder . npm run dev:all
+
 # Docta engineering rules
 
 Build a trustworthy pedagogical RAG tutor. Phase 0 is complete; the next slice is Increment 5:

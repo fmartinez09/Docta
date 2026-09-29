@@ -91,7 +91,7 @@ Documentation and logs never contain passwords, PATs or API keys.
 | MinIO administrator | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`; matching `DOCTA_S3_ACCESS_KEY` / `DOCTA_S3_SECRET_KEY`. Development API/worker share these storage credentials. |
 | IAM encryption / browser sessions | `DOCTA_DEV_IAM_MASTERKEY` / `DOCTA_WEB_SESSION_SECRET`; preserve the IAM key with its database. |
 | Tutor service | `DOCTA_TUTOR_API_KEY`; belongs to the selected developer/provider and is entered privately. |
-| Identity / backups | `state/identity.json` records Project/Application IDs and pending mutations. `state/env-before-configure-*` contains prior private environments. Initial service PAT expiry is `DOCTA_DEV_PAT_EXPIRATION` (one year); changing that field alone does not renew an issued PAT. |
+| Identity / backups | `state/identity.json` records IAM Instance/Project/Application IDs and pending mutations. `state/env-before-configure-*` contains prior private environments; `state/identity-before-recovery-*` and `state/env-before-identity-recovery-*` preserve identity recovery inputs. Initial service PAT expiry is `DOCTA_DEV_PAT_EXPIRATION` (one year); changing that field alone does not renew an issued PAT. |
 
 The Project ID is the audience; the actual OIDC Client ID is separate from the Application ID.
 The Docker socket grants local daemon control. These privileged local accounts are development
@@ -112,6 +112,27 @@ Import accepts only an original managed environment, refuses to overwrite one, a
 generate credentials. Root/native environments require their own setup and are never silently
 imported. Dependency-cache volumes alone do not block first setup. Rebuilding fixes a stale
 workspace mount but cannot recover lost ignored files or rotate existing database passwords.
+
+If you intentionally deleted **both IAM and Docta data volumes** while keeping the private
+files, their saved IDs refer to the previous ZITADEL database. For legacy state that has no
+Instance ID, run this once inside the devcontainer:
+
+```bash
+npm run dev:recover-identity
+```
+
+Recovery requires a confirmed missing saved project, no pending creation and no Docta data
+volumes. It privately archives the environment/identity state, preserves credentials and tutor
+settings, provisions the new identity IDs, starts Docta infrastructure and applies migrations.
+It deletes no Docker resources and cannot restore data you already deleted. Reopening or
+`dev:setup` then reuses the new IDs; `dev:all` starts the application servers.
+
+New state binds IDs to the authenticated [ZITADEL instance](https://zitadel.com/docs/reference/api/admin/zitadel.admin.v1.AdminService.GetMyInstance).
+A confirmed instance change automatically recovers only when all three Docta data volumes are
+absent. Retained application data requires restoring its matching IAM database/bootstrap backup:
+new users with the same login have different identity subjects. A missing project in the same
+instance, permission failures and ambiguous creations never trigger automatic recreation.
+Removing containers alone or rebuilding the devcontainer preserves data volumes and identity IDs.
 
 Helper commands also use the managed environment:
 

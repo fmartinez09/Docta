@@ -106,6 +106,7 @@ consolidating documentation changes their location, not their technical meaning.
 | Development OIDC Web application | 2026-09-29; implemented | The Next.js BFF handles the code exchange on the server, so register the managed public PKCE application as Web instead of User Agent. Reconcile existing applications in place, retaining resource/Client IDs, exact callbacks, no client secret, JWT access tokens and local Development Mode. Gates: creation/migration/idempotency tests and real Management API confirmation. Reverse only the app type if compatibility requires it; no BFF/API authorization changes. |
 | Missing development configuration guard | 2026-09-29; implemented | Rebuilding after a lost WSL mount retained durable Docker volumes while a missing ignored environment generated incompatible secrets. Before CLI environment creation, check the five known development data volumes; absent configuration with existing data fails before generating secrets or changing services. Unavailable Docker also fails closed; dependency caches alone permit first setup. Recovery keeps current tutor settings and restores original infrastructure credentials/identity. Gates: fresh/existing/unavailable volume tests and real bootstrap recovery. Reverse only this guard if environment ownership changes; do not reset data as a recovery step. |
 | Developer-owned configuration | 2026-09-29; implemented | Replace implicit root-environment copying and personal template values with an explicit terminal assistant. Fresh profiles allow developer credentials or unique generated accounts, coordinated loopback ports, and an explicitly selected endpoint/model/key with validated provider/schema/budgets. Hooks install tools first and reconcile only existing profiles. Existing profiles preserve infrastructure credentials/identity, with tutor-only reconfiguration and private backups; recovery imports original managed files without overwriting. Managed API/token/web processes ignore root environments. README owns the account/secret-location inventory; secrets remain ignored private files. Gates: fresh/reuse/recovery/hidden-input/isolation tests and serial repository checks. Reverse by restoring the private profile backup and native setup; no production authorization or tutor request/validation changes. |
+| Development identity after volume deletion | 2026-09-29; implemented | Deleting IAM and Docta data volumes retained private files with obsolete project/application IDs, stopping bootstrap before Docta infra. Bind saved IDs to the authenticated IAM Instance ID; a confirmed instance change may archive/reconcile local identity only when all Docta data volumes are absent. Legacy state requires explicit recovery with a confirmed project 404 and no pending creation. Preserve credentials/tutor settings and privately archive both inputs before replacing IDs; retained data requires its matching IAM backup because subjects change. Same-instance deletions, permission/network failures and ambiguous creates fail closed. Gates: legacy/new-instance/preservation/refusal tests, real recovery and idempotent bootstrap, serial repository checks. Reverse the recovery behavior independently; restore matching private state and IAM volumes together. No production authorization or tutor contract changes. |
 
 Phase 0 merged at `e31d1aa`. Historical records include 110 Python tests on September 7 and a
 later September 8 prompt-v2 check reporting 118 Python tests, ten web tests, Ruff and ESLint.
@@ -168,6 +169,17 @@ passed. Only those temporary IAM resources were removed. Existing development bo
 credentials, tutor settings and identity IDs. The first full run exposed a filtered test-port
 override; propagating it to test Compose fixed the mismatch and the serial rerun passed.
 Documentation links passed. No live LLM request or model-quality evaluation was performed.
+
+The volume-deletion recovery on 2026-09-29 passed 52 setup tests and full checks through
+Dev Containers CLI `exec` in the WSL container: 133 unit tests, 177 total serial Python tests
+(including the browser flow), 12 web tests, Ruff, ESLint, web/worker builds and whitespace checks.
+Real legacy-state recovery refreshed Project/Application/Client IDs, preserved every other
+managed setting, and confirmed Web PKCE/JWT callbacks with no OIDC compliance problems.
+A bootstrap rerun kept both environment files and identity state unchanged; the real retained-data
+guard refused replacement. The first full run stopped at a disconnected VS Code Docker credential
+helper; the successful rerun used temporary public-registry Docker and neutral Git configuration
+without changing user authentication settings. Deleted development data was not restored;
+no live LLM request or model-quality evaluation was performed.
 
 On 2026-09-22 the owner requested three English documents instead of duplicated architecture,
 state, roadmap, ADR and runbook files. This replaces their document-location requirements only.

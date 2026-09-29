@@ -152,11 +152,21 @@ class FakeIAM:
         self.created = []
         self.updated = []
         self.fail_create = False
+        self.instance_id = "instance-1"
+        self.project_id = "101"
+        self.app_id = "202"
+        self.fail_project_read = None
+        self.fail_instance_read = None
 
     def __call__(self, request):
         path = request.url.path.removeprefix("/management/v1")
         body = json.loads(request.content) if request.content else None
         assert request.headers["authorization"] == "Bearer private-pat"
+        if path == "/admin/v1/instances/me":
+            return httpx.Response(
+                self.fail_instance_read or 200,
+                json={"instance": {"id": self.instance_id}, "message": "private-payload"},
+            )
         if path.endswith("/_search"):
             resource = self.app if "/apps" in path else self.project
             name = body["queries"][0]["nameQuery"]["name"]
@@ -166,6 +176,8 @@ class FakeIAM:
         if request.method == "GET":
             if "/apps/" in path:
                 app = self.app
+                if not app or not path.endswith("/" + app["id"]):
+                    return httpx.Response(404, json={"message": "private-payload"})
                 if app and app["oidcConfig"].get("appType") == "OIDC_APP_TYPE_WEB":
                     # Match protobuf JSON: the zero/default enum value is omitted.
                     app = app | {
@@ -176,6 +188,12 @@ class FakeIAM:
                         }
                     }
                 return httpx.Response(200, json={"app": app})
+            if self.fail_project_read == "timeout":
+                raise httpx.ReadTimeout("private-payload", request=request)
+            if self.fail_project_read:
+                return httpx.Response(self.fail_project_read, json={"message": "private-payload"})
+            if not self.project or not path.endswith("/" + self.project["id"]):
+                return httpx.Response(404, json={"message": "private-payload"})
             return httpx.Response(200, json={"project": self.project})
         if request.method == "PUT":
             assert "version" not in body  # Management v1 update does not accept this create field.
@@ -184,10 +202,12 @@ class FakeIAM:
             return httpx.Response(200, json={})
         self.created.append(path)
         if path == "/projects":
-            self.project = {"id": "101", "name": body["name"], "state": "PROJECT_STATE_ACTIVE"}
-            response = {"id": "101"}
+            self.project = {
+                "id": self.project_id, "name": body["name"], "state": "PROJECT_STATE_ACTIVE"
+            }
+            response = {"id": self.project_id}
         else:
-            assert path == "/projects/101/apps/oidc"
+            assert path == f"/projects/{self.project_id}/apps/oidc"
             assert body["accessTokenType"] == "OIDC_TOKEN_TYPE_JWT"
             assert body["appType"] == "OIDC_APP_TYPE_WEB"
             assert body["authMethodType"] == "OIDC_AUTH_METHOD_TYPE_NONE"
@@ -197,12 +217,12 @@ class FakeIAM:
                 "http://127.0.0.1:18765/callback",
             ]
             self.app = {
-                "id": "202",
+                "id": self.app_id,
                 "name": body.pop("name"),
                 "state": "APP_STATE_ACTIVE",
                 "oidcConfig": body | {"clientId": "actual-client@docta"},
             }
-            response = {"appId": "202", "clientId": "actual-client@docta"}
+            response = {"appId": self.app_id, "clientId": "actual-client@docta"}
         if self.fail_create:
             raise httpx.ReadTimeout("private provider payload", request=request)
         return httpx.Response(200, json=response)
@@ -236,7 +256,178 @@ def test_provision_creates_jwt_pkce_app_and_recovers_ids_on_rerun(tmp_path):
     assert first["DOCTA_DEV_OIDC_CLIENT_ID"] != "202"
     assert len(fake.created) == 2
     assert not fake.updated
+    assert json.loads((tmp_path / "identity.json").read_text())["instance_id"] == "instance-1"
     assert "private-pat" not in (tmp_path / "identity.json").read_text()
+
+
+def legacy_state(tmp_path, *, pending=None):
+    path = tmp_path / "identity.json"
+    state = {"project_id": "old-project", "app_id": "old-app"}
+    if pending:
+        state["pending"] = pending
+    path.write_text(json.dumps(state))
+    return path, path.read_bytes()
+
+
+def mock_volumes(monkeypatch, volumes=()):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout="\n".join(volumes), stderr="private-payload"
+        ),
+    )
+
+
+def test_legacy_missing_project_explains_recovery_without_changing_state(tmp_path):
+    fake = FakeIAM()
+    path, original = legacy_state(tmp_path)
+    with pytest.raises(dev.DevError, match="dev:recover-identity") as error:
+        provisioner(tmp_path, fake).provision(values())
+    assert path.read_bytes() == original
+    assert not fake.created
+    assert "private-payload" not in str(error.value)
+
+
+def test_explicit_legacy_recovery_archives_identity_and_environment(tmp_path, monkeypatch):
+    fake = FakeIAM()
+    path, original = legacy_state(tmp_path)
+    env_path = tmp_path / "managed.env"
+    env_path.write_text("DOCTA_TUTOR_API_KEY='private-key'\nPOSTGRES_PASSWORD='private-db'\n")
+    env_snapshot = env_path.read_bytes()
+    mock_volumes(monkeypatch, ("docta-dev-iam_postgres-data", "other_postgres-data"))
+    provision = provisioner(tmp_path, fake)
+    provision.env_path = env_path
+    result = provision.provision(values(), recover_identity=True)
+    assert result["DOCTA_OIDC_AUDIENCE"] == "101"
+    assert next(tmp_path.glob("identity-before-recovery-*.json")).read_bytes() == original
+    assert next(tmp_path.glob("env-before-identity-recovery-*")).read_bytes() == env_snapshot
+    assert env_path.read_bytes() == env_snapshot
+    assert json.loads(path.read_text())["instance_id"] == "instance-1"
+    assert len(fake.created) == 2
+    assert "private-key" not in path.read_text()
+
+
+def test_confirmed_new_instance_recovers_without_reusing_previous_ids(tmp_path, monkeypatch):
+    fake = FakeIAM()
+    provisioner(tmp_path, fake).provision(values())
+    path = tmp_path / "identity.json"
+    original = path.read_bytes()
+    fake.instance_id = "instance-2"
+    fake.project = fake.app = None
+    fake.project_id, fake.app_id = "303", "404"
+    mock_volumes(monkeypatch)
+    result = provisioner(tmp_path, fake).provision(values())
+    assert result["DOCTA_OIDC_AUDIENCE"] == "303"
+    assert json.loads(path.read_text()) == {
+        "instance_id": "instance-2", "project_id": "303", "app_id": "404"
+    }
+    assert next(tmp_path.glob("identity-before-recovery-*.json")).read_bytes() == original
+    assert len(fake.created) == 4
+
+
+@pytest.mark.parametrize("bound", [False, True])
+@pytest.mark.parametrize("volume", ["postgres-data", "minio-data", "redis-data"])
+def test_identity_recovery_refuses_retained_docta_data(tmp_path, monkeypatch, volume, bound):
+    fake = FakeIAM()
+    path, original = legacy_state(tmp_path)
+    if bound:
+        path.write_text(json.dumps({"instance_id": "old-instance", "project_id": "old-project"}))
+        original = path.read_bytes()
+    mock_volumes(monkeypatch, ("docta-dev_" + volume,))
+    with pytest.raises(dev.DevError, match="Retained data uses"):
+        provisioner(tmp_path, fake).provision(values(), recover_identity=not bound)
+    assert path.read_bytes() == original
+    assert not fake.created
+    assert not list(tmp_path.glob("*before*"))
+
+
+def test_identity_recovery_requires_available_docker(tmp_path, monkeypatch):
+    fake = FakeIAM()
+    path, original = legacy_state(tmp_path)
+
+    def fail(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command, stderr="private-payload")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    with pytest.raises(dev.DevError, match="Cannot check Docta data volumes") as error:
+        provisioner(tmp_path, fake).provision(values(), recover_identity=True)
+    assert path.read_bytes() == original
+    assert "private-payload" not in str(error.value)
+    assert not fake.created
+
+
+@pytest.mark.parametrize("failure", [401, 403, 500, "timeout"])
+def test_legacy_recovery_does_not_treat_request_failure_as_missing_project(tmp_path, failure):
+    fake = FakeIAM()
+    fake.fail_project_read = failure
+    path, original = legacy_state(tmp_path)
+    with pytest.raises(dev.DevError) as error:
+        provisioner(tmp_path, fake).provision(values(), recover_identity=True)
+    assert path.read_bytes() == original
+    assert not fake.created
+    assert "private-payload" not in str(error.value)
+
+
+@pytest.mark.parametrize("failure", [401, 403, 500])
+def test_instance_read_failure_preserves_state_without_mutations(tmp_path, failure):
+    fake = FakeIAM()
+    fake.fail_instance_read = failure
+    path, original = legacy_state(tmp_path)
+    with pytest.raises(dev.DevError) as error:
+        provisioner(tmp_path, fake).provision(values(), recover_identity=True)
+    assert path.read_bytes() == original
+    assert not fake.created
+    assert "private-payload" not in str(error.value)
+
+
+def test_legacy_recovery_preserves_ambiguous_creation(tmp_path):
+    fake = FakeIAM()
+    path, original = legacy_state(tmp_path, pending="app_id")
+    with pytest.raises(dev.DevError, match="no pending creation"):
+        provisioner(tmp_path, fake).provision(values(), recover_identity=True)
+    assert path.read_bytes() == original
+    assert not fake.created
+
+
+def test_deleted_project_in_same_instance_is_not_automatically_recreated(tmp_path):
+    fake = FakeIAM()
+    provisioner(tmp_path, fake).provision(values())
+    path = tmp_path / "identity.json"
+    original = path.read_bytes()
+    fake.project = None
+    with pytest.raises(dev.DevError, match="same ZITADEL instance"):
+        provisioner(tmp_path, fake).provision(values())
+    with pytest.raises(dev.DevError, match="requires legacy state"):
+        provisioner(tmp_path, fake).provision(values(), recover_identity=True)
+    assert path.read_bytes() == original
+    assert len(fake.created) == 2
+
+
+def test_legacy_existing_project_binds_instance_and_keeps_resource_ids(tmp_path):
+    fake = FakeIAM()
+    first = provisioner(tmp_path, fake).provision(values())
+    path = tmp_path / "identity.json"
+    state = json.loads(path.read_text())
+    state.pop("instance_id")
+    path.write_text(json.dumps(state))
+    original = path.read_bytes()
+    with pytest.raises(dev.DevError, match="still exists"):
+        provisioner(tmp_path, fake).provision(values(), recover_identity=True)
+    assert path.read_bytes() == original
+    assert provisioner(tmp_path, fake).provision(values()) == first
+    assert len(fake.created) == 2
+    assert json.loads(path.read_text())["instance_id"] == fake.instance_id
+
+
+def test_lost_state_file_does_not_discard_environment_project_id(tmp_path):
+    fake = FakeIAM()
+    with pytest.raises(dev.DevError, match="dev:recover-identity"):
+        provisioner(tmp_path, fake).provision(
+            values() | {"DOCTA_DEV_OIDC_PROJECT_ID": "old-project"}
+        )
+    assert not fake.created
+    assert not (tmp_path / "identity.json").exists()
 
 
 def test_configuration_drift_repairs_only_managed_app(tmp_path):

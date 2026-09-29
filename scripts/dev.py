@@ -43,6 +43,12 @@ class DevError(Exception):
     """Safe diagnostics without subprocess/provider payloads."""
 
 
+class IAMHTTPError(DevError):
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def private_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -304,6 +310,33 @@ def initialize(root: Path = ROOT) -> dict[str, str]:
     return values
 
 
+def guard_identity_recovery() -> None:
+    """New identity subjects must not be attached to retained application data."""
+    try:
+        result = subprocess.run(
+            ["docker", "volume", "ls", "--filter", "name=docta-dev_", "--format", "{{.Name}}"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise DevError(
+            "Cannot check Docta data volumes; make Docker available before identity recovery. "
+            "Local identity state was preserved."
+        ) from error
+    if {
+        "docta-dev_postgres-data",
+        "docta-dev_minio-data",
+        "docta-dev_redis-data",
+    }.intersection(result.stdout.splitlines()):
+        raise DevError(
+            "ZITADEL identity recovery requires absent Docta data volumes. Retained data uses "
+            "the original identity subjects; restore the matching IAM database/bootstrap volumes "
+            "and private configuration instead. No volumes or identity state were replaced."
+        )
+
+
 def prompt(label: str, default: str = "", *, choices: tuple[str, ...] = ()) -> str:
     while True:
         value = input(label + (f" [{default}]" if default else "") + ": ").strip() or default
@@ -539,7 +572,7 @@ def compose(stack: str) -> list[str]:
 
 
 def identifier(document: dict[str, Any], key: str) -> str:
-    value = document.get(key)
+    value = document.get(key) if isinstance(document, dict) else None
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9@._-]{1,200}", value):
         raise DevError("ZITADEL returned a missing or invalid resource identifier.")
     return value
@@ -548,9 +581,12 @@ def identifier(document: dict[str, Any], key: str) -> str:
 class Provisioner:
     """Version-pinned management API with durable ambiguous-create protection."""
 
-    def __init__(self, client: httpx.Client, state_path: Path) -> None:
+    def __init__(
+        self, client: httpx.Client, state_path: Path, *, env_path: Path | None = None
+    ) -> None:
         self.client = client
         self.path = state_path
+        self.env_path = env_path
         self.state: dict[str, str] = (
             json.loads(state_path.read_text()) if state_path.exists() else {}
         )
@@ -558,18 +594,26 @@ class Provisioner:
     def save(self) -> None:
         private_write(self.path, json.dumps(self.state, indent=2) + "\n")
 
-    def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict:
+    def request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        api: str = "/management/v1",
+    ) -> dict:
         try:
-            response = self.client.request(method, "/management/v1" + path, json=body)
+            response = self.client.request(method, api + path, json=body)
             response.raise_for_status()
             document = response.json()
             if not isinstance(document, dict):
                 raise ValueError
             return document
         except httpx.HTTPStatusError as error:
-            raise DevError(
+            raise IAMHTTPError(
                 f"ZITADEL {method} {path} failed (HTTP {error.response.status_code}); "
-                "no mutation was retried. Check local readiness/admin permissions."
+                "no mutation was retried. Check local readiness/admin permissions.",
+                error.response.status_code,
             ) from error
         except (httpx.HTTPError, ValueError) as error:
             raise DevError(
@@ -624,7 +668,53 @@ class Provisioner:
         self.save()
         return resource_id
 
-    def provision(self, values: dict[str, str]) -> dict[str, str]:
+    def recover(self, instance_id: str) -> None:
+        guard_identity_recovery()
+        suffix = secrets.token_hex(8)
+        if self.path.exists():
+            private_write(
+                self.path.with_name(f"identity-before-recovery-{suffix}.json"),
+                self.path.read_text(encoding="utf-8"),
+            )
+        if self.env_path is not None:
+            private_write(
+                self.path.with_name(f"env-before-identity-recovery-{suffix}"),
+                self.env_path.read_text(encoding="utf-8"),
+            )
+        self.state = {"instance_id": instance_id}
+        self.save()
+        print("Fresh ZITADEL instance: previous local identity archived; credentials preserved.")
+
+    def provision(
+        self, values: dict[str, str], *, recover_identity: bool = False
+    ) -> dict[str, str]:
+        instance_id = identifier(
+            self.request("GET", "/instances/me", api="/admin/v1").get("instance", {}), "id"
+        )
+        # A lost state file must not silently discard the environment's previous project ID.
+        if not self.state and values.get("DOCTA_DEV_OIDC_PROJECT_ID"):
+            self.state["project_id"] = identifier(values, "DOCTA_DEV_OIDC_PROJECT_ID")
+        previous_instance = self.state.get("instance_id")
+        if previous_instance and previous_instance != instance_id:
+            self.recover(instance_id)
+        elif recover_identity:
+            if previous_instance or self.state.get("pending") or "project_id" not in self.state:
+                raise DevError(
+                    "Identity recovery requires legacy state with a missing project and no "
+                    "pending creation. Inspect the named resource or restore matching IAM "
+                    "volumes; local state was preserved."
+                )
+            try:
+                self.request("GET", "/projects/" + identifier(self.state, "project_id"))
+            except IAMHTTPError as error:
+                if error.status_code != 404:
+                    raise
+                self.recover(instance_id)
+            else:
+                raise DevError("Saved ZITADEL project still exists; local state was preserved.")
+        if not self.state:
+            self.state["instance_id"] = instance_id
+            self.save()
         project_id = self.ensure(
             "/projects",
             values["DOCTA_DEV_PROJECT_NAME"],
@@ -633,12 +723,35 @@ class Provisioner:
             body={},
             result_key="id",
         )
-        project = self.request("GET", f"/projects/{project_id}").get("project", {})
+        try:
+            project = self.request("GET", f"/projects/{project_id}").get("project", {})
+        except IAMHTTPError as error:
+            if error.status_code != 404:
+                raise
+            message = (
+                "Saved ZITADEL project no longer exists. Local files still reference old IDs; "
+                "Docta infrastructure was not started. "
+                if not previous_instance
+                else "Saved project is missing from the same ZITADEL instance. "
+            )
+            raise DevError(
+                message
+                + (
+                    "After intentionally deleting both IAM and Docta data volumes, run "
+                    "npm run dev:recover-identity. Otherwise restore the matching IAM backup."
+                    if not previous_instance
+                    else "Inspect the named resource or restore the matching IAM backup; "
+                    "local state was preserved."
+                )
+            ) from error
         if (
             project.get("name") != values["DOCTA_DEV_PROJECT_NAME"]
             or project.get("state") != "PROJECT_STATE_ACTIVE"
         ):
             raise DevError("Saved project is missing, inactive or does not match this workspace.")
+        if "instance_id" not in self.state:
+            self.state["instance_id"] = instance_id
+            self.save()
         config = {
             "redirectUris": [
                 values["DOCTA_WEB_ORIGIN"] + "/auth/callback",
@@ -720,7 +833,7 @@ def start_iam(values: dict[str, str]) -> None:
         raise DevError(message) from error
 
 
-def bootstrap(values: dict[str, str]) -> dict[str, str]:
+def bootstrap(values: dict[str, str], *, recover_identity: bool = False) -> dict[str, str]:
     run(["docker", "info"], values, quiet=True)
     for stack in ("iam", "infra"):
         run([*compose(stack), "config", "--quiet"], values, quiet=True)
@@ -747,7 +860,9 @@ def bootstrap(values: dict[str, str]) -> dict[str, str]:
         trust_env=False,
         follow_redirects=False,
     ) as client:
-        updates = Provisioner(client, state_dir / "identity.json").provision(values)
+        updates = Provisioner(
+            client, state_dir / "identity.json", env_path=ROOT / ".devcontainer/.env"
+        ).provision(values, recover_identity=recover_identity)
     update_env(ROOT / ".devcontainer/.env", updates)
     values |= updates
     print("Starting isolated PostgreSQL, Redis and MinIO; applying migrations...", flush=True)
@@ -863,7 +978,7 @@ def check(values: dict[str, str], *, full: bool) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
-    for action in ("bootstrap", "start", "stop", "post-start", "status"):
+    for action in ("bootstrap", "start", "stop", "post-start", "status", "recover-identity"):
         actions.add_parser(action)
     settings = actions.add_parser("configure", aliases=["init"])
     settings.add_argument("--from-env", type=Path, help="Restore an original managed environment")
@@ -888,6 +1003,8 @@ def main() -> int:
         values = initialize()
         if args.action in ("bootstrap", "post-start"):
             bootstrap(values)
+        elif args.action == "recover-identity":
+            bootstrap(values, recover_identity=True)
         elif args.action == "status":
             show_status(values)
         elif args.action == "start":

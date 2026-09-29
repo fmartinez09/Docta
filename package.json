@@ -11,6 +11,7 @@
     "dev:configure": "uv run --frozen python scripts/dev.py configure",
     "dev:status": "uv run --frozen python scripts/dev.py status",
     "dev:setup": "uv run --frozen python scripts/dev.py bootstrap",
+    "dev:recover-identity": "uv run --frozen python scripts/dev.py recover-identity",
     "dev:all": "uv run --frozen python scripts/dev.py start",
     "dev:stop": "uv run --frozen python scripts/dev.py stop",
     "check:dev": "uv run --frozen python scripts/dev.py check",
