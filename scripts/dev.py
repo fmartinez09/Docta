@@ -353,6 +353,22 @@ def guard_identity_recovery() -> None:
         )
 
 
+def iam_database_present() -> bool:
+    """Check whether the initial administrator may already exist in durable IAM data."""
+    try:
+        result = subprocess.run(
+            ["docker", "volume", "ls", "--filter", "name=docta-dev-iam_postgres-data",
+             "--format", "{{.Name}}"],
+            capture_output=True, text=True, check=True, timeout=15,
+            env=process_environment({}),
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise DevError(
+            "Cannot inspect the ZITADEL database volume; no credentials changed."
+        ) from None
+    return "docta-dev-iam_postgres-data" in result.stdout.splitlines()
+
+
 def prompt(label: str, default: str = "", *, choices: tuple[str, ...] = ()) -> str:
     while True:
         value = input(label + (f" [{default}]" if default else "") + ": ").strip() or default
@@ -383,6 +399,50 @@ def prompt_secret(label: str, default: str = "", *, existing: bool = False) -> s
         if value and not any(char in value for char in "\r\n\x00"):
             return value
         print("A nonempty secret is required; its value will not be displayed.")
+
+
+def choose_initial_admin(values: dict[str, str], root: Path = ROOT) -> dict[str, str]:
+    """Explicitly select the human admin only before a new ZITADEL database exists."""
+    if not sys.stdin.isatty():
+        raise DevError(
+            "A new ZITADEL instance needs an interactive administrator choice. "
+            "Run npm run dev:setup in a terminal; no credentials changed."
+        )
+    print(
+        "ZITADEL has no database yet. The managed profile contains an earlier administrator; "
+        "choose whether the new IAM instance should reuse that login/password or use new ones."
+    )
+    decision = prompt("Administrator credentials for this new instance: change/reuse",
+                      "change", choices=("change", "reuse"))
+    if decision == "reuse":
+        print("The existing administrator credentials will be used for the new IAM instance.")
+        return values
+    updated = values.copy()
+    updated["DOCTA_DEV_LOGIN_USERNAME"] = prompt(
+        "New ZITADEL administrator login/email", values["DOCTA_DEV_LOGIN_USERNAME"]
+    )
+    updated["DOCTA_DEV_LOGIN_EMAIL"] = updated["DOCTA_DEV_LOGIN_USERNAME"]
+    password = prompt_secret("New ZITADEL administrator password")
+    if password != prompt_secret("Confirm new ZITADEL administrator password"):
+        raise DevError("Administrator passwords did not match; no credentials changed.")
+    if len(password) < 8 or any(
+        not re.search(pattern, password)
+        for pattern in (r"[A-Z]", r"[a-z]", r"[0-9]", r"[^A-Za-z0-9]")
+    ):
+        raise DevError("Administrator password does not meet ZITADEL's policy; nothing changed.")
+    updated["DOCTA_DEV_LOGIN_PASSWORD"] = password
+    updated |= derived_values(updated)
+    validate_environment(updated)
+    backup = profile_path("state", root) / ("env-before-new-iam-" + secrets.token_hex(8))
+    private_write(backup, profile_path(".env", root).read_text(encoding="utf-8"))
+    update_env(profile_path(".env", root), {
+        key: updated[key] for key in (
+            "DOCTA_DEV_LOGIN_USERNAME", "DOCTA_DEV_LOGIN_EMAIL",
+            "DOCTA_DEV_LOGIN_PASSWORD", "DOCTA_DEV_OIDC_LOGIN_HINT",
+        )
+    })
+    print("New administrator credentials saved privately for first-instance creation.")
+    return updated
 
 
 def configure_tutor(values: dict[str, str], *, existing: bool) -> dict[str, str]:
@@ -445,6 +505,11 @@ def show_status(values: dict[str, str]) -> None:
             else "OIDC registration pending; run npm run dev:setup."
         )
     )
+    if profile_path(".legacy-import.json").is_file():
+        print(
+            "Profile origin: imported from an earlier checkout's managed .devcontainer/.env. "
+            "A fresh IAM setup explicitly asks whether to reuse or change its administrator."
+        )
     print(
         f"Web: {values['DOCTA_WEB_ORIGIN']}; API: {values['DOCTA_API_BASE_URL']}; "
         f"ZITADEL: {values['DOCTA_OIDC_ISSUER']}/ui/console."
@@ -1231,15 +1296,30 @@ def main() -> int:
         with environment_lock(profile_directory(ROOT)) as descriptor:
             if args.action in ("configure", "init", "bootstrap", "recover-identity"):
                 if migrate_legacy(ROOT):
-                    print("Imported the original managed configuration and identity state; "
-                          "checkout files were preserved.")
+                    print(
+                        "Imported the original managed configuration and identity state. "
+                        "ZITADEL administrator credentials were copied from the old "
+                        ".devcontainer/.env; no administrator password was generated. "
+                        "Checkout files were preserved."
+                    )
             if args.action in ("configure", "init"):
                 configure(source=args.from_env)
                 return 0
             guard_environment_creation()
-            if args.action == "bootstrap" and not profile_path(".env").is_file():
+            freshly_configured = args.action == "bootstrap" and not profile_path(".env").is_file()
+            if freshly_configured:
                 configure()
+            elif args.action == "bootstrap":
+                print(
+                    "Existing managed credentials loaded. If ZITADEL already has a database, "
+                    "its administrator credentials will be preserved."
+                )
             values = initialize()
+            if (args.action in ("bootstrap", "recover-identity")
+                    and not freshly_configured and not iam_database_present()):
+                if values.get("DOCTA_DEV_OIDC_PROJECT_ID"):
+                    guard_identity_recovery()
+                values = choose_initial_admin(values)
             if args.action == "bootstrap":
                 bootstrap(values)
             elif args.action == "recover-identity":

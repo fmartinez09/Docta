@@ -81,10 +81,13 @@ start the API, worker, or web development servers; `dev:all` does that after set
 No LLM request is made during setup.
 
 If a checkout already contains an old managed `.devcontainer/.env`, setup imports those existing
-credentials and identity into the shared profile. It then reuses the matching service volumes,
-so the first-run questions are skipped. `dev:status` shows which profile is active. Choosing new
-infrastructure credentials requires a genuinely new environment with no existing Docta data
-volumes; editing the imported passwords does not change passwords held by the services.
+credentials and identity into the shared profile. If the ZITADEL database already exists, setup
+reuses its administrator credentials. If that database is absent, setup asks whether the new IAM
+instance should reuse the imported administrator or use a new login and password; retained Docta
+data must first have its matching IAM data restored. `dev:status` shows which profile is active.
+Choosing new infrastructure database/storage credentials requires a genuinely new environment
+with no existing Docta data volumes; editing imported passwords does not change passwords held
+by running services.
 
 The assistant is intentionally developer-controlled. The generated values are defaults, not
 mandatory credentials. Press Enter to accept a displayed default. Secret prompts are hidden;
@@ -208,6 +211,9 @@ the service's administration flow, then update the matching private configuratio
 provisioning PAT expires according to `DOCTA_DEV_PAT_EXPIRATION` (one year by default); changing
 that field later does not renew an already-issued token. Do not regenerate infrastructure
 credentials just because a checkout was rebuilt.
+For an existing ZITADEL database, change the human administrator password in the ZITADEL
+Console. `DOCTA_DEV_LOGIN_PASSWORD` is a first-instance input; changing it in the profile or
+rerunning `dev:setup` does not change that user's password inside ZITADEL.
 
 If the ignored profile was lost while development volumes remain, stop and restore the matching
 `.env` and `state/` before running setup. Setup refuses to generate new credentials over known
@@ -236,7 +242,8 @@ npm run dev:recover-identity
 Recovery archives the private inputs, preserves tutor settings and infrastructure credentials,
 creates a new local identity, and applies migrations. It refuses to run when application data is
 still present or when the previous project state is ambiguous. Deleted data cannot be restored by
-this command.
+this command. When creating a new ZITADEL database from an existing profile, it also asks
+whether to reuse or change the initial administrator credentials.
 
 ## Application addresses and first exercise
 

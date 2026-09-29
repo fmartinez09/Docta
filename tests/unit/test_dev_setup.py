@@ -103,6 +103,27 @@ def test_cli_guards_missing_environment_before_initialization(monkeypatch, capsy
     assert "Existing volumes require original configuration" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("action", ["bootstrap", "recover-identity"])
+def test_setup_requires_admin_choice_for_existing_profile_without_iam_data(
+    tmp_path, monkeypatch, action
+):
+    profile = save_profile(tmp_path)
+    selected = []
+    monkeypatch.setattr(dev, "ROOT", tmp_path)
+    monkeypatch.setenv("DOCTA_DEV_HOME", str(tmp_path / "private-lock"))
+    monkeypatch.setattr(dev, "migrate_legacy", lambda root: False)
+    monkeypatch.setattr(dev, "guard_environment_creation", lambda: None)
+    monkeypatch.setattr(dev, "initialize", lambda: profile)
+    monkeypatch.setattr(dev, "iam_database_present", lambda: False)
+    monkeypatch.setattr(
+        dev, "choose_initial_admin", lambda values: selected.append("choose") or values
+    )
+    monkeypatch.setattr(dev, "bootstrap", lambda values, **kwargs: selected.append("bootstrap"))
+    monkeypatch.setattr(dev.sys, "argv", ["dev.py", action])
+    assert dev.main() == 0
+    assert selected == ["choose", "bootstrap"]
+
+
 def test_fresh_profile_does_not_copy_host_credentials_and_keeps_stable_secrets(tmp_path):
     original = (
         "# User settings\nDOCTA_DATABASE_URL=postgresql://private-db/live\n"
@@ -652,6 +673,60 @@ def test_first_configuration_accepts_own_accounts_and_google_without_starting_se
     ):
         assert secret not in output
     assert "do-not-copy-this-key" not in (tmp_path / ".devcontainer/.env").read_text()
+
+
+@pytest.mark.parametrize(
+    ("volumes", "present"), [([], False), (["docta-dev-iam_postgres-data"], True)]
+)
+def test_initial_iam_database_detection_uses_exact_volume_name(monkeypatch, volumes, present):
+    def inspect(command, **kwargs):
+        assert command[:3] == ["docker", "volume", "ls"]
+        return subprocess.CompletedProcess(command, 0, stdout="\n".join(volumes))
+
+    monkeypatch.setattr(subprocess, "run", inspect)
+    assert dev.iam_database_present() is present
+
+
+def test_new_iam_admin_choice_updates_only_selected_credentials(tmp_path, monkeypatch, capsys):
+    original = save_profile(tmp_path)
+    path = tmp_path / ".devcontainer/.env"
+    before = path.read_bytes()
+    interactive(
+        monkeypatch, ["change", "new-admin@example.test"], ["ChosenSecret1!", "ChosenSecret1!"]
+    )
+
+    updated = dev.choose_initial_admin(original, tmp_path)
+
+    assert updated["DOCTA_DEV_LOGIN_USERNAME"] == "new-admin@example.test"
+    assert updated["DOCTA_DEV_LOGIN_PASSWORD"] == "ChosenSecret1!"
+    assert updated["DOCTA_DEV_OIDC_LOGIN_HINT"] == "new-admin@example.test"
+    assert updated["POSTGRES_PASSWORD"] == original["POSTGRES_PASSWORD"]
+    assert dev.initialize(tmp_path) == updated
+    backups = list((path.parent / "state").glob("env-before-new-iam-*"))
+    assert len(backups) == 1 and backups[0].read_bytes() == before
+    assert "ChosenSecret1!" not in capsys.readouterr().out
+
+
+def test_new_iam_admin_reuse_is_explicit_and_does_not_rewrite_profile(tmp_path, monkeypatch):
+    original = save_profile(tmp_path)
+    path = tmp_path / ".devcontainer/.env"
+    before = path.read_bytes()
+    interactive(monkeypatch, ["reuse"], [])
+    assert dev.choose_initial_admin(original, tmp_path) == original
+    assert path.read_bytes() == before
+    assert not (path.parent / "state").exists()
+
+
+def test_new_iam_admin_mismatch_preserves_profile(tmp_path, monkeypatch):
+    original = save_profile(tmp_path)
+    path = tmp_path / ".devcontainer/.env"
+    before = path.read_bytes()
+    interactive(
+        monkeypatch, ["change", "new-admin@example.test"], ["ChosenSecret1!", "OtherSecret1!"]
+    )
+    with pytest.raises(dev.DevError, match="did not match"):
+        dev.choose_initial_admin(original, tmp_path)
+    assert path.read_bytes() == before
 
 
 def test_existing_configuration_preserves_identity_and_credentials_when_switching_provider(
