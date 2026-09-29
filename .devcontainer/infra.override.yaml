@@ -1,0 +1,12 @@
+services:
+  worker:
+    image: docta-worker:latest
+    env_file: !override ["../.devcontainer/.env"]
+    environment:
+      DOCTA_DATABASE_URL: ${DOCTA_DEV_WORKER_DATABASE_URL}
+  postgres:
+    ports: !override ["127.0.0.1:${POSTGRES_PORT}:5432"]
+  minio:
+    ports: !override
+      - "127.0.0.1:${MINIO_API_PORT}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT}:9001"

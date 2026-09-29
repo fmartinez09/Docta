@@ -1,0 +1,118 @@
+name: docta-dev-iam
+
+services:
+  proxy:
+    image: traefik:v3.7.7
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=docta-dev-iam
+      - --providers.docker.constraints=Label(`docta.dev.iam`, `true`)
+      - --entrypoints.web.address=:80
+      - --ping=true
+      - --ping.entrypoint=web
+      - --accesslog=false
+    ports: ["127.0.0.1:${DOCTA_DEV_IAM_PORT}:80"]
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping", "--ping.entrypoint=web", "--entrypoints.web.address=:80"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      zitadel-api: { condition: service_healthy }
+      zitadel-login: { condition: service_healthy }
+
+  zitadel-api:
+    image: ghcr.io/zitadel/zitadel:v4.16.0
+    user: "0"
+    command: start-from-init --masterkey "${DOCTA_DEV_IAM_MASTERKEY:?Run npm run dev:configure first}"
+    environment:
+      ZITADEL_PORT: 8080
+      ZITADEL_EXTERNALDOMAIN: localhost
+      ZITADEL_EXTERNALPORT: ${DOCTA_DEV_IAM_PORT}
+      ZITADEL_EXTERNALSECURE: false
+      ZITADEL_TLS_ENABLED: false
+      ZITADEL_DATABASE_POSTGRES_DSN: ${DOCTA_DEV_IAM_DATABASE_DSN}
+      ZITADEL_FIRSTINSTANCE_ORG_NAME: ${DOCTA_DEV_ORG_NAME}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: ${DOCTA_DEV_LOGIN_USERNAME}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_EMAIL_ADDRESS: ${DOCTA_DEV_LOGIN_EMAIL}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_EMAIL_VERIFIED: true
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: ${DOCTA_DEV_LOGIN_PASSWORD}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: false
+      ZITADEL_FIRSTINSTANCE_PATPATH: /bootstrap/admin.pat
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: ${DOCTA_DEV_BOOTSTRAP_USERNAME}
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Docta local provisioning
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: ${DOCTA_DEV_PAT_EXPIRATION}
+      ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /bootstrap/login.pat
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: ${DOCTA_DEV_LOGIN_SERVICE_USERNAME}
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: Docta local login
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: ${DOCTA_DEV_PAT_EXPIRATION}
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: true
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: ${DOCTA_OIDC_ISSUER}/ui/v2/login/
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: ${DOCTA_OIDC_ISSUER}/ui/v2/login/login?authRequest=
+      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: ${DOCTA_OIDC_ISSUER}/ui/v2/login/logout?post_logout_redirect=
+      ZITADEL_SAML_DEFAULTLOGINURLV2: ${DOCTA_OIDC_ISSUER}/ui/v2/login/login?samlRequest=
+      ZITADEL_LOGSTORE_ACCESS_STDOUT_ENABLED: false
+    volumes: ["bootstrap:/bootstrap"]
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
+      start_period: 20s
+    depends_on:
+      postgres: { condition: service_healthy }
+    labels:
+      docta.dev.iam: "true"
+      traefik.enable: "true"
+      traefik.http.routers.iam.rule: Host(`localhost`)
+      traefik.http.routers.iam.entrypoints: web
+      traefik.http.routers.iam.priority: "10"
+      traefik.http.services.iam.loadbalancer.server.port: "8080"
+      traefik.http.services.iam.loadbalancer.server.scheme: h2c
+
+  zitadel-login:
+    image: ghcr.io/zitadel/zitadel-login:v4.16.0
+    user: "0"
+    environment:
+      ZITADEL_API_URL: http://zitadel-api:8080
+      NEXT_PUBLIC_BASE_PATH: /ui/v2/login
+      ZITADEL_SERVICE_USER_TOKEN_FILE: /bootstrap/login.pat
+      CUSTOM_REQUEST_HEADERS: Host:localhost:${DOCTA_DEV_IAM_PORT},X-Forwarded-Proto:http
+    volumes: ["bootstrap:/bootstrap:ro"]
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.mjs", "http://localhost:3000/ui/v2/login/healthy"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
+      start_period: 20s
+    depends_on:
+      zitadel-api: { condition: service_healthy }
+    labels:
+      docta.dev.iam: "true"
+      traefik.enable: "true"
+      traefik.http.routers.login.rule: Host(`localhost`) && PathPrefix(`/ui/v2/login`)
+      traefik.http.routers.login.entrypoints: web
+      traefik.http.routers.login.priority: "100"
+      traefik.http.services.login.loadbalancer.server.port: "3000"
+
+  postgres:
+    image: postgres:17.10-alpine
+    environment:
+      POSTGRES_DB: ${DOCTA_DEV_IAM_DB_NAME}
+      POSTGRES_USER: ${DOCTA_DEV_IAM_DB_USER}
+      POSTGRES_PASSWORD: ${DOCTA_DEV_IAM_DB_PASSWORD}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+networks:
+  default:
+    name: docta-dev-iam
+volumes:
+  postgres-data:
+  bootstrap:
