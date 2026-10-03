@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 PROMPT_VERSION = "phase0-guidance-v2"
-RETRIEVAL_VERSION = "spanish-fts-and-top5-v1"
+RETRIEVAL_VERSION = "spanish-fts-coverage-top5-v2"
 ABSTENTION = (
     "No encuentro evidencia suficiente en el material activo del curso para responder. "
     "¿Puedes precisar el concepto o indicar la sección del PDF que estás estudiando?"

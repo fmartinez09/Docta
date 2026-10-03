@@ -1,4 +1,7 @@
-from sqlalchemy import func, select
+import re
+
+from sqlalchemy import Text, any_, cast, func, select
+from sqlalchemy.dialects.postgresql import ARRAY, TSQUERY
 
 from docta_api.conversation_models import Conversation, Message, MessageState
 from docta_api.database import Database
@@ -10,6 +13,25 @@ from docta_api.models import (
     DocumentVersion,
 )
 from docta_api.rag import Evidence, RAGFailure, RetrievalScope
+
+_TSQUERY_LEXEME = re.compile(r"'((?:[^'\\]|''|\\.)*)'")
+_TSQUERY_UNESCAPE = re.compile(r"''|\\(.)")
+
+
+def _query_lexemes(plain_query_text: str) -> tuple[str, ...]:
+    """Distinct stemmed lexemes of a `plainto_tsquery` rendered as text."""
+    lexemes = (
+        _TSQUERY_UNESCAPE.sub(lambda m: m.group(1) or "'", raw)
+        for raw in _TSQUERY_LEXEME.findall(plain_query_text)
+    )
+    return tuple(dict.fromkeys(lexemes))
+
+
+def _or_tsquery_text(lexemes: tuple[str, ...]) -> str:
+    # Each lexeme is quoted and escaped, so it can neither break nor extend the tsquery.
+    return " | ".join(
+        "'" + lexeme.replace("\\", "\\\\").replace("'", "''") + "'" for lexeme in lexemes
+    )
 
 
 class PostgresRetriever:
@@ -56,7 +78,27 @@ class PostgresRetriever:
             )
             if authorized is None:
                 raise RAGFailure("RETRIEVAL_SCOPE_INVALID")
-            query = func.plainto_tsquery("spanish", question)
+            # Recall: plainto_tsquery ANDs every lexeme, so one term absent from the target chunk
+            # yielded no rows. Instead, take the lexemes the question stems to (taken from the
+            # tsquery itself so they match the stored tsvector exactly, no re-stemming), match any
+            # of them via an OR tsquery cast from the quoted/escaped lexemes (a cast does not
+            # re-stem), and require coverage: matched * 3 >= n * 2, i.e. >= ceil(2n/3) lexemes.
+            # The floor keeps off-topic or one-common-word chunks out. Integer math only.
+            plain_text = session.scalar(
+                select(cast(func.plainto_tsquery("spanish", question), Text))
+            )
+            lexemes = _query_lexemes(plain_text or "")
+            if not lexemes:
+                return ()
+            lexeme_param = cast(list(lexemes), ARRAY(Text))
+            query = cast(_or_tsquery_text(lexemes), TSQUERY)
+            lexeme_column = func.unnest(lexeme_param).column_valued("lexeme")
+            matched = (
+                select(func.count())
+                .where(lexeme_column == any_(func.tsvector_to_array(Chunk.search_vector)))
+                .correlate(Chunk)
+                .scalar_subquery()
+            )
             rows = session.execute(
                 select(Chunk, Document.title, DocumentVersion.object_sha256)
                 .join(
@@ -74,8 +116,13 @@ class PostgresRetriever:
                     Chunk.corpus_version_id == scope.corpus_version_id,
                     DocumentVersion.state == "INDEXED",
                     Chunk.search_vector.op("@@")(query),
+                    matched * 3 >= len(lexemes) * 2,
                 )
-                .order_by(func.ts_rank_cd(Chunk.search_vector, query).desc(), Chunk.ordinal)
+                .order_by(
+                    matched.desc(),
+                    func.ts_rank_cd(Chunk.search_vector, query).desc(),
+                    Chunk.ordinal,
+                )
                 .limit(5)
             ).all()
             return tuple(
