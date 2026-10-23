@@ -32,6 +32,43 @@ def test_runtime_processes_do_not_receive_iam_administrator_secrets():
     assert "DOCTA_TUTOR_API_KEY" not in dev.runtime_values(values, "web")
 
 
+def test_embedding_key_reaches_api_and_worker_but_is_never_printed(capsys):
+    values = {
+        "DOCTA_DATABASE_URL": "postgresql://app",
+        "DOCTA_RETRIEVAL_MODE": "fts",
+        "DOCTA_EMBED_ENDPOINT_URL": "https://embed.test/v1/embeddings",
+        "DOCTA_EMBED_MODEL": "vendor/model",
+        "DOCTA_EMBED_API_KEY": "private-embed-key",
+        "DOCTA_EMBED_DIMENSIONS": "8",
+    }
+
+    for component in ("api", "worker"):
+        runtime = dev.runtime_values(values, component)
+        assert runtime["DOCTA_EMBED_API_KEY"] == "private-embed-key"
+        assert runtime["DOCTA_EMBED_MODEL"] == "vendor/model"
+        assert runtime["DOCTA_RETRIEVAL_MODE"] == "fts"
+    for component in ("web", "migration", "helper"):
+        assert "DOCTA_EMBED_API_KEY" not in dev.runtime_values(values, component)
+    assert "private-embed-key" not in capsys.readouterr().out
+
+
+def test_worker_override_passes_embedder_variables_without_defaults():
+    from pathlib import Path
+
+    text = (Path(dev.ROOT) / ".devcontainer/infra.override.yaml").read_text()
+    for name in (
+        "DOCTA_RETRIEVAL_MODE",
+        "DOCTA_EMBED_ENDPOINT_URL",
+        "DOCTA_EMBED_MODEL",
+        "DOCTA_EMBED_API_KEY",
+        "DOCTA_EMBED_DIMENSIONS",
+        "DOCTA_EMBED_INPUT_TYPE",
+        "DOCTA_EMBED_PROVIDER_ROUTING",
+    ):
+        assert f"      {name}:\n" in text
+        assert f"${{{name}" not in text
+
+
 def test_process_environment_removes_host_service_credentials(monkeypatch):
     monkeypatch.setenv("DOCTA_DEV_LOGIN_PASSWORD", "host-iam-password")
     monkeypatch.setenv("POSTGRES_PASSWORD", "host-database-password")
