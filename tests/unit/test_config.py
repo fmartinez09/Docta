@@ -159,3 +159,25 @@ def test_tutor_timeout_must_remain_below_message_timeout() -> None:
             tutor_timeout_seconds=175,
             message_timeout_seconds=175,
         )
+
+
+def test_retrieval_mode_defaults_to_fts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DOCTA_RETRIEVAL_MODE", raising=False)
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://docta:secret@localhost:5432/docta",
+        minio_health_url="http://localhost:9000/health",
+    )
+
+    assert settings.retrieval_mode == "fts"
+
+
+@pytest.mark.parametrize("value", ["dense", "", "bogus"])
+def test_retrieval_mode_rejects_unsupported_values(value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://docta:secret@localhost:5432/docta",
+            minio_health_url="http://localhost:9000/health",
+            retrieval_mode=value,  # type: ignore[arg-type]
+        )

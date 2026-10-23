@@ -26,8 +26,8 @@ from docta_api.identity import (
 )
 from docta_api.jobs import JobDispatcher, OutboxJobDispatcher
 from docta_api.object_storage import ObjectStorage, UnconfiguredObjectStorage
-from docta_api.postgres_retriever import PostgresRetriever
 from docta_api.rag import EvidenceResponseValidator, Retriever, TutorModel
+from docta_api.retriever_factory import build_retriever
 from docta_api.s3_object_storage import S3ObjectStorage
 from docta_api.tutor_http import ChatCompletionsTutorModel, UnconfiguredTutorModel
 from docta_api.workspace import WorkspaceService
@@ -145,15 +145,21 @@ def create_app(
         resolved_document_service = document_service
 
     resolved_model = tutor_model or _default_tutor_model(resolved_settings)
+    # The retriever is resolved first: its version is persisted by ConversationService.
     if conversation_service is None:
         assert database is not None
+        resolved_retriever = retriever or build_retriever(resolved_settings, database)
         conversation_service = ConversationService(
             database, model_version=resolved_model.version,
+            retrieval_version=resolved_retriever.version,
             message_timeout_seconds=resolved_settings.message_timeout_seconds,
         )
+    else:
+        resolved_retriever = retriever or build_retriever(
+            resolved_settings, conversation_service.database
+        )
     conversation_runtime = ConversationRuntime(
-        conversation_service, retriever or PostgresRetriever(conversation_service.database),
-        resolved_model, EvidenceResponseValidator(),
+        conversation_service, resolved_retriever, resolved_model, EvidenceResponseValidator(),
     )
 
     @asynccontextmanager

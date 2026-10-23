@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     tutor_schema_profile: Literal["standard", "llama_cpp"] = "standard"
     tutor_provider: Literal["chat_completions", "unsloth"] = "chat_completions"
     message_timeout_seconds: int = Field(default=90, ge=5, le=180)
+    retrieval_mode: Literal["fts"] = "fts"
 
     @model_validator(mode="after")
     def validate_tutor_configuration(self) -> "Settings":

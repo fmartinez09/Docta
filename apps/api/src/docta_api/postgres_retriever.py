@@ -3,16 +3,10 @@ import re
 from sqlalchemy import Text, any_, cast, func, select
 from sqlalchemy.dialects.postgresql import ARRAY, TSQUERY
 
-from docta_api.conversation_models import Conversation, Message, MessageState
 from docta_api.database import Database
-from docta_api.models import (
-    Chunk,
-    CorpusVersion,
-    CourseMembership,
-    Document,
-    DocumentVersion,
-)
-from docta_api.rag import Evidence, RAGFailure, RetrievalScope
+from docta_api.models import Chunk, Document, DocumentVersion
+from docta_api.rag import Evidence, RetrievalScope
+from docta_api.retrieval_auth import authorize_retrieval, validate_scope
 
 _TSQUERY_LEXEME = re.compile(r"'((?:[^'\\]|''|\\.)*)'")
 _TSQUERY_UNESCAPE = re.compile(r"''|\\(.)")
@@ -35,49 +29,15 @@ def _or_tsquery_text(lexemes: tuple[str, ...]) -> str:
 
 
 class PostgresRetriever:
+    version = "spanish-fts-coverage-top5-v2"
+
     def __init__(self, database: Database) -> None:
         self._database = database
 
     def retrieve(self, scope: RetrievalScope, question: str) -> tuple[Evidence, ...]:
-        if not isinstance(scope, RetrievalScope) or not all(
-            (
-                scope.course_id,
-                scope.corpus_version_id,
-                scope.principal_user_id,
-                scope.conversation_id,
-                scope.message_id,
-            )
-        ):
-            raise RAGFailure("RETRIEVAL_SCOPE_INVALID")
+        validate_scope(scope)
         with self._database.session() as session:
-            # Recheck the durable, server-captured scope and current membership at the port.
-            authorized = session.scalar(
-                select(Message.id)
-                .join(Conversation, Conversation.id == Message.conversation_id)
-                .join(
-                    CourseMembership,
-                    (CourseMembership.course_id == Conversation.course_id)
-                    & (CourseMembership.user_id == Conversation.owner_user_id),
-                )
-                .join(
-                    CorpusVersion,
-                    (CorpusVersion.id == Message.corpus_version_id)
-                    & (CorpusVersion.course_id == Message.course_id),
-                )
-                .where(
-                    Message.id == scope.message_id,
-                    Message.course_id == scope.course_id,
-                    Message.corpus_version_id == scope.corpus_version_id,
-                    Message.conversation_id == scope.conversation_id,
-                    Message.state == MessageState.PENDING,
-                    Message.question == question,
-                    Message.deadline_at > func.now(),
-                    Conversation.owner_user_id == scope.principal_user_id,
-                    CorpusVersion.state == "READY",
-                )
-            )
-            if authorized is None:
-                raise RAGFailure("RETRIEVAL_SCOPE_INVALID")
+            authorize_retrieval(session, scope, question)
             # Recall: plainto_tsquery ANDs every lexeme, so one term absent from the target chunk
             # yielded no rows. Instead, take the lexemes the question stems to (taken from the
             # tsquery itself so they match the stored tsvector exactly, no re-stemming), match any
