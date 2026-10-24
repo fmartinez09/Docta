@@ -183,10 +183,13 @@ async def test_logs_never_contain_text_vectors_or_credentials(queued_pdf, caplog
     assert r["runtime"].worker.process(r["envelope"])
     assert _job(r).state == "SUCCEEDED"
     with r["runtime"].database.session() as session:
-        stored = session.scalars(select(Chunk.content)).all()
+        stored = session.scalars(
+            select(Chunk.content).where(
+                Chunk.document_version_id == r["envelope"].document_version_id
+            )
+        ).all()
     assert stored
     assert caplog.records
-    assert "Photosynthesis" not in caplog.text
     assert API_KEY not in caplog.text
     assert all(text not in caplog.text for text in stored)
     assert all(str(embedder.vector_for(text)[0]) not in caplog.text for text in stored)

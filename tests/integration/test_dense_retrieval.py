@@ -7,6 +7,7 @@ exact. The retriever is called directly; no provider or model is involved.
 
 import math
 from contextlib import contextmanager
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 import psycopg
@@ -315,6 +316,21 @@ async def test_authorization_revoked_while_embedding_fails_the_search_session(de
 
     assert error.value.code == "RETRIEVAL_SCOPE_INVALID"
     assert embedder.calls == 1
+
+
+async def test_initial_authorization_failure_happens_before_embedding(dense):
+    a = dense["a"]
+    _seed_embeddings(dense, a.corpus_id, _exact)
+    embedder = ScriptedEmbedder()
+
+    with _pending(dense, a) as scope:
+        invalid_scope = replace(scope, message_id=uuid4())
+        for bad_scope, question in ((invalid_scope, QUESTION), (scope, "otra pregunta")):
+            with pytest.raises(RAGFailure) as error:
+                _retriever(dense, embedder).retrieve(bad_scope, question)
+            assert error.value.code == "RETRIEVAL_SCOPE_INVALID"
+
+    assert embedder.calls == 0 and embedder.query_calls == []
 
 
 async def test_embedding_failure_or_wrong_dimensions_fail_closed_after_a_single_call(dense):

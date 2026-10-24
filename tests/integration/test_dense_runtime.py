@@ -98,6 +98,29 @@ async def test_unavailable_embedding_fails_safely_after_one_call_keeping_the_que
     assert (question, state, code) == (QUESTION, "failed", "RETRIEVAL_UNAVAILABLE")
 
 
+async def test_question_is_already_persisted_when_the_query_is_embedded(chat):
+    seen: list[tuple[str, str]] = []
+
+    class ObservingEmbedder(FakeEmbedder):
+        def embed_query(self, text: str) -> list[float]:
+            with psycopg.connect(str(chat["settings"].database_url)) as connection:
+                seen.extend(
+                    connection.execute(
+                        "SELECT question, state FROM messages WHERE conversation_id=%s "
+                        "AND question=%s",
+                        (chat["conversation"], text),
+                    ).fetchall()
+                )
+            return super().embed_query(text)
+
+    embedder = ObservingEmbedder()
+    _seed_embeddings(chat, embedder, QUESTION)
+    async with _dense_client(chat, embedder, RecordingTutor()) as client:
+        await _ask(client, chat, QUESTION, "dense-persisted-first")
+
+    assert seen == [(QUESTION, "pending")]
+
+
 async def test_missing_index_fails_safely_without_falling_back_or_calling_the_model(chat):
     embedder = FakeEmbedder()
     tutor = RecordingTutor()
