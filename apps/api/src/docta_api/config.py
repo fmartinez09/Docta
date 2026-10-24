@@ -101,6 +101,8 @@ class Settings(BaseSettings):
             )
         if self.retrieval_mode == "dense" and configured == 0:
             raise ValueError("Dense retrieval requires an embedder configuration")
+        if self.retrieval_mode == "dense" and self.dense_max_distance is None:
+            raise ValueError("Dense retrieval requires a maximum distance threshold")
         for template in (self.embed_query_template, self.embed_document_template):
             if template.count(TEXT_PLACEHOLDER) != 1:
                 raise ValueError("Embedding templates must contain {text} exactly once")

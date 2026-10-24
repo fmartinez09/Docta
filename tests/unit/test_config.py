@@ -252,12 +252,22 @@ def test_dense_requires_embedder() -> None:
             minio_health_url="http://localhost:9000/health",
             retrieval_mode="dense",
         )
-    assert embed_settings(retrieval_mode="dense").retrieval_mode == "dense"
+    settings = embed_settings(retrieval_mode="dense", dense_max_distance=0.4)
+    assert settings.retrieval_mode == "dense"
+
+
+def test_dense_requires_a_distance_threshold() -> None:
+    with pytest.raises(ValidationError, match="maximum distance"):
+        embed_settings(retrieval_mode="dense")
+    assert embed_settings(retrieval_mode="dense", dense_max_distance=0.4).dense_max_distance == 0.4
+    # fts does not require it
+    assert embed_settings().dense_max_distance is None
 
 
 def test_dense_requires_embed_and_tutor_below_message_timeout() -> None:
     embed_settings(
         retrieval_mode="dense",
+        dense_max_distance=0.4,
         embed_timeout_seconds=10,
         tutor_timeout_seconds=79,
         message_timeout_seconds=90,
@@ -265,6 +275,7 @@ def test_dense_requires_embed_and_tutor_below_message_timeout() -> None:
     with pytest.raises(ValidationError, match="Embedding plus tutor"):
         embed_settings(
             retrieval_mode="dense",
+            dense_max_distance=0.4,
             embed_timeout_seconds=10,
             tutor_timeout_seconds=80,
             message_timeout_seconds=90,
