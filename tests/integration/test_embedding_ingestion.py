@@ -48,8 +48,16 @@ async def test_ready_corpus_has_one_embedding_per_chunk(queued_pdf):  # noqa: F8
     assert chunk_count >= 1
     assert _counts(r) == (1, chunk_count)
     assert sum(len(batch) for batch in embedder.document_calls) == chunk_count
+    envelope = r["envelope"]
     with r["runtime"].database.session() as session:
-        rows = session.execute(select(ChunkEmbedding.embedding_version, ChunkEmbedding.dims)).all()
+        job_corpora = select(CorpusVersionDocument.corpus_version_id).where(
+            CorpusVersionDocument.document_version_id == envelope.document_version_id
+        )
+        rows = session.execute(
+            select(ChunkEmbedding.embedding_version, ChunkEmbedding.dims).where(
+                ChunkEmbedding.corpus_version_id.in_(job_corpora)
+            )
+        ).all()
     mine = [row for row in rows if row.embedding_version == embedder.version]
     assert len(mine) == chunk_count
     assert {row.dims for row in mine} == {8}
