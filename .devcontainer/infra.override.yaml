@@ -23,7 +23,6 @@ services:
       DOCTA_JOB_RETRY_BASE_SECONDS: ${DOCTA_JOB_RETRY_BASE_SECONDS:-2}
       DOCTA_JOB_RECONCILE_SECONDS: ${DOCTA_JOB_RECONCILE_SECONDS:-30}
       # Direct pass-through (no default): an unset variable stays unset in the worker.
-      DOCTA_RETRIEVAL_MODE:
       DOCTA_EMBED_ENDPOINT_URL:
       DOCTA_EMBED_MODEL:
       DOCTA_EMBED_API_KEY:

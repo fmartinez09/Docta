@@ -35,7 +35,8 @@ def test_runtime_processes_do_not_receive_iam_administrator_secrets():
 def test_embedding_key_reaches_api_and_worker_but_is_never_printed(capsys):
     values = {
         "DOCTA_DATABASE_URL": "postgresql://app",
-        "DOCTA_RETRIEVAL_MODE": "fts",
+        "DOCTA_RETRIEVAL_MODE": "dense",
+        "DOCTA_DENSE_MAX_DISTANCE": "0.4",
         "DOCTA_EMBED_ENDPOINT_URL": "https://embed.test/v1/embeddings",
         "DOCTA_EMBED_MODEL": "vendor/model",
         "DOCTA_EMBED_API_KEY": "private-embed-key",
@@ -46,7 +47,12 @@ def test_embedding_key_reaches_api_and_worker_but_is_never_printed(capsys):
         runtime = dev.runtime_values(values, component)
         assert runtime["DOCTA_EMBED_API_KEY"] == "private-embed-key"
         assert runtime["DOCTA_EMBED_MODEL"] == "vendor/model"
-        assert runtime["DOCTA_RETRIEVAL_MODE"] == "fts"
+    api = dev.runtime_values(values, "api")
+    assert api["DOCTA_RETRIEVAL_MODE"] == "dense"
+    assert api["DOCTA_DENSE_MAX_DISTANCE"] == "0.4"
+    worker = dev.runtime_values(values, "worker")
+    assert "DOCTA_RETRIEVAL_MODE" not in worker
+    assert "DOCTA_DENSE_MAX_DISTANCE" not in worker
     for component in ("web", "migration", "helper"):
         assert "DOCTA_EMBED_API_KEY" not in dev.runtime_values(values, component)
     assert "private-embed-key" not in capsys.readouterr().out
@@ -56,8 +62,8 @@ def test_worker_override_passes_embedder_variables_without_defaults():
     from pathlib import Path
 
     text = (Path(dev.ROOT) / ".devcontainer/infra.override.yaml").read_text()
+    assert "DOCTA_RETRIEVAL_MODE" not in text
     for name in (
-        "DOCTA_RETRIEVAL_MODE",
         "DOCTA_EMBED_ENDPOINT_URL",
         "DOCTA_EMBED_MODEL",
         "DOCTA_EMBED_API_KEY",

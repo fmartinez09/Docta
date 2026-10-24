@@ -675,7 +675,12 @@ def runtime_values(values: dict[str, str], component: str = "api") -> dict[str, 
     """IAM administration credentials belong only to development provisioning."""
     allowed = {"DOCTA_" + name.upper() for name in Settings.model_fields}
     if component == "worker":
-        allowed = {key for key in allowed if not key.startswith(("DOCTA_OIDC_", "DOCTA_TUTOR_"))}
+        # Only the API retrieves; the worker embeds documents and needs DOCTA_EMBED_* only.
+        allowed = {
+            key for key in allowed
+            if not key.startswith(("DOCTA_OIDC_", "DOCTA_TUTOR_"))
+            and key not in {"DOCTA_RETRIEVAL_MODE", "DOCTA_DENSE_MAX_DISTANCE"}
+        }
     elif component == "web":
         allowed = {
             "DOCTA_API_BASE_URL", "DOCTA_WEB_ORIGIN", "DOCTA_WEB_SESSION_SECRET",
