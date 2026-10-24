@@ -1007,7 +1007,7 @@ def bootstrap(values: dict[str, str], *, recover_identity: bool = False) -> dict
     update_env(profile_path(".env"), updates)
     values |= updates
     print("Starting isolated PostgreSQL, Redis and MinIO; applying migrations...", flush=True)
-    run([*compose("infra"), "up", "-d", "--wait"], values, quiet=True)
+    run([*compose("infra"), "up", "-d", "--build", "--wait"], values, quiet=True)
     run([sys.executable, "-m", "alembic", "-c", "apps/api/alembic.ini", "upgrade", "head"],
         runtime_values(values, "migration"), quiet=True)
     print("Infrastructure ready. Start servers with npm run dev:all.")
@@ -1242,7 +1242,11 @@ def check(values: dict[str, str], *, full: bool) -> None:
         test_overrides = {
             key: value for key, value in test_values.items() if key.startswith("DOCTA_TEST_")
         }
-        run([*compose("test"), "up", "-d", "--wait"], values | test_overrides, quiet=True)
+        run(
+            [*compose("test"), "up", "-d", "--build", "--wait"],
+            values | test_overrides,
+            quiet=True,
+        )
         run(["docker", "build", "-f", "infra/worker.Dockerfile", "-t", "docta-worker:latest", "."],
             test_values, inherit_identity=False)
         run(

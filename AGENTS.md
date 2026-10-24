@@ -17,7 +17,8 @@ Examples:
 # Docta engineering rules
 
 Build a trustworthy pedagogical RAG tutor. Phase 0 is complete; the next slice is Increment 5:
-an offline evaluation harness and reviewed dataset. Optimize for evidence, isolation and visible
+an offline evaluation harness and reviewed dataset. Increment 7 (vector retrieval) is developed
+in parallel with Increments 5 and 6. Optimize for evidence, isolation and visible
 failures, not framework adoption or feature breadth.
 
 ## Documentation and scope
@@ -100,7 +101,9 @@ not model quality; simulated students do not prove human learning. Report missin
 ## Not authorized by the current plan
 
 The evaluation harness is not a production agent runtime. Query resolution, experimental hybrid
-retrieval and typed pedagogy are later gated work. pgvector/RRF are not installed or mandatory.
+retrieval and typed pedagogy are later gated work. pgvector is part of the local PostgreSQL image
+for dense retrieval; FTS remains the default until a measured evaluation justifies changing it.
+RRF and hybrid retrieval are not authorized.
 The later second retrieval is bounded, not permission for provider retries or autonomous loops.
 
 Tool/repair loops, general-knowledge fallback, new framework/runtime adoption, graph or multiagent
