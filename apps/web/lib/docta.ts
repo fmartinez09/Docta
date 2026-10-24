@@ -68,6 +68,10 @@ export function humanError(error: unknown): string {
       "El tutor no está disponible en este momento. Tu pregunta quedó guardada.",
     MODEL_OUTPUT_INVALID:
       "No pudimos validar la respuesta del tutor. Tu pregunta quedó guardada.",
+    RETRIEVAL_UNAVAILABLE:
+      "No pudimos buscar en el material en este momento. Tu pregunta quedó guardada.",
+    RETRIEVAL_INDEX_MISSING:
+      "El material del curso aún no está indexado para la búsqueda. Tu pregunta quedó guardada.",
     COURSE_CORPUS_NOT_READY:
       "El docente debe publicar el material antes de consultar al tutor.",
     PROCESSING_INTERRUPTED:

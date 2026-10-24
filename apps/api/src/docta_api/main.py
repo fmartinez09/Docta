@@ -18,6 +18,7 @@ from docta_api.courses import router as courses_router
 from docta_api.database import Database
 from docta_api.documents import DocumentService
 from docta_api.documents import router as documents_router
+from docta_api.embedding_http import build_embedder
 from docta_api.health import MinioProbe, PostgresProbe, ReadinessProbes
 from docta_api.identity import (
     IdentityProvider,
@@ -94,6 +95,11 @@ def _default_object_storage(settings: Settings) -> ObjectStorage:
     )
 
 
+def _default_retriever(settings: Settings, database: Database) -> Retriever:
+    embedder = build_embedder(settings) if settings.retrieval_mode == "dense" else None
+    return build_retriever(settings, database, embedder)
+
+
 def _default_tutor_model(settings: Settings) -> TutorModel:
     if settings.tutor_endpoint_url is None:
         return UnconfiguredTutorModel()
@@ -148,14 +154,14 @@ def create_app(
     # The retriever is resolved first: its version is persisted by ConversationService.
     if conversation_service is None:
         assert database is not None
-        resolved_retriever = retriever or build_retriever(resolved_settings, database)
+        resolved_retriever = retriever or _default_retriever(resolved_settings, database)
         conversation_service = ConversationService(
             database, model_version=resolved_model.version,
             retrieval_version=resolved_retriever.version,
             message_timeout_seconds=resolved_settings.message_timeout_seconds,
         )
     else:
-        resolved_retriever = retriever or build_retriever(
+        resolved_retriever = retriever or _default_retriever(
             resolved_settings, conversation_service.database
         )
     conversation_runtime = ConversationRuntime(

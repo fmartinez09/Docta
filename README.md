@@ -310,6 +310,10 @@ Useful failure codes include:
 | `MODEL_OUTPUT_INVALID` | The response was refused, truncated, malformed, or cited unsupported text. |
 | `COURSE_CORPUS_NOT_READY` | Publish an indexed corpus and submit a new question. |
 | `RETRIEVAL_SCOPE_INVALID` | Authorization or course/corpus binding failed closed; inspect scope rather than loosening filters. |
+| `RETRIEVAL_UNAVAILABLE` | Dense retrieval could not embed the question (not retried); the question stays saved and the message is `failed`. |
+| `RETRIEVAL_INDEX_MISSING` | Some indexed chunks lack embeddings for the configured embedding version; re-import the documents. |
+| `EMBEDDING_UNAVAILABLE` | Ingestion: transient embedding failure; the job retries within its existing bounded retry. |
+| `EMBEDDING_INVALID` | Ingestion: non-transient embedding failure; the document is marked `FAILED`. |
 | `PROCESSING_INTERRUPTED` | Shutdown, deadline, or abandoned execution; the question remains durable and is not automatically retried. |
 
 ## Ingestion and durability
