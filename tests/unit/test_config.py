@@ -4,11 +4,11 @@ from pydantic import ValidationError
 from docta_api.config import Settings
 
 
-def test_settings_accept_local_postgres_and_minio_urls() -> None:
+def test_settings_accept_local_postgres_and_storage_urls() -> None:
     settings = Settings(
         environment="test",
         database_url="postgresql://docta:secret@localhost:5432/docta",
-        minio_health_url="http://localhost:9000/minio/health/ready",
+        storage_health_url="http://localhost:9000/health/ready",
     )
 
     assert settings.environment == "test"
@@ -19,7 +19,7 @@ def test_settings_accept_local_postgres_and_minio_urls() -> None:
     ("field", "value"),
     [
         ("database_url", "sqlite:///docta.db"),
-        ("minio_health_url", "ftp://localhost/health"),
+        ("storage_health_url", "ftp://localhost/health"),
         ("dependency_timeout_seconds", 0),
         ("redis_url", "https://localhost:6379"),
         ("job_lease_seconds", 0),
@@ -31,7 +31,7 @@ def test_settings_fail_closed_for_invalid_dependency_config(field: str, value: o
     values: dict[str, object] = {
         "environment": "test",
         "database_url": "postgresql://docta:secret@localhost:5432/docta",
-        "minio_health_url": "http://localhost:9000/minio/health/ready",
+        "storage_health_url": "http://localhost:9000/health/ready",
     }
     values[field] = value
 
@@ -45,7 +45,7 @@ def test_oidc_configuration_must_be_complete_when_any_value_is_present() -> None
             _env_file=None,
             environment="test",
             database_url="postgresql://docta:secret@localhost:5432/docta",
-            minio_health_url="http://localhost:9000/minio/health/ready",
+            storage_health_url="http://localhost:9000/health/ready",
             oidc_issuer="https://identity.example.com/",
         )
 
@@ -55,7 +55,7 @@ def test_oidc_issuer_preserves_an_empty_path_for_exact_claim_validation() -> Non
         _env_file=None,
         environment="test",
         database_url="postgresql://docta:secret@localhost:5432/docta",
-        minio_health_url="http://localhost:9000/minio/health/ready",
+        storage_health_url="http://localhost:9000/health/ready",
         oidc_issuer="http://localhost:8080",
         oidc_audience="389218636289540099",
         oidc_jwks_url="http://localhost:8080/oauth/v2/keys",
@@ -70,7 +70,7 @@ def test_production_requires_oidc_configuration() -> None:
             _env_file=None,
             environment="production",
             database_url="postgresql://docta:secret@localhost:5432/docta",
-            minio_health_url="http://localhost:9000/minio/health/ready",
+            storage_health_url="http://localhost:9000/health/ready",
         )
 
 
@@ -80,7 +80,7 @@ def test_s3_configuration_must_be_complete() -> None:
             _env_file=None,
             environment="test",
             database_url="postgresql://docta:secret@localhost:5432/docta",
-            minio_health_url="http://localhost:9000/minio/health/ready",
+            storage_health_url="http://localhost:9000/health/ready",
             s3_endpoint_url="http://localhost:9000",
         )
 
@@ -91,7 +91,7 @@ def test_production_requires_object_storage_after_oidc_is_configured() -> None:
             _env_file=None,
             environment="production",
             database_url="postgresql://docta:secret@localhost:5432/docta",
-            minio_health_url="http://localhost:9000/minio/health/ready",
+            storage_health_url="http://localhost:9000/health/ready",
             oidc_issuer="https://identity.example/",
             oidc_audience="docta-api",
             oidc_jwks_url="https://identity.example/.well-known/jwks.json",
@@ -103,7 +103,7 @@ def test_chunk_overlap_must_be_smaller_than_chunk_size() -> None:
         Settings(
             environment="test",
             database_url="postgresql://docta:secret@localhost:5432/docta",
-            minio_health_url="http://localhost:9000/minio/health/ready",
+            storage_health_url="http://localhost:9000/health/ready",
             chunk_size_characters=400,
             chunk_overlap_characters=400,
         )
@@ -133,7 +133,7 @@ def test_tutor_configuration_fails_closed(values):
         Settings(
             _env_file=None,
             database_url="postgresql://docta:secret@localhost:5432/docta",
-            minio_health_url="http://localhost:9000/health",
+            storage_health_url="http://localhost:9000/health",
             **values,
         )
 
@@ -142,7 +142,7 @@ def test_tutor_configuration_accepts_a_timeout_near_three_minutes() -> None:
     settings = Settings(
         _env_file=None,
         database_url="postgresql://docta:secret@localhost:5432/docta",
-        minio_health_url="http://localhost:9000/health",
+        storage_health_url="http://localhost:9000/health",
         tutor_timeout_seconds=175,
         message_timeout_seconds=180,
     )
@@ -155,7 +155,7 @@ def test_tutor_timeout_must_remain_below_message_timeout() -> None:
         Settings(
             _env_file=None,
             database_url="postgresql://docta:secret@localhost:5432/docta",
-            minio_health_url="http://localhost:9000/health",
+            storage_health_url="http://localhost:9000/health",
             tutor_timeout_seconds=175,
             message_timeout_seconds=175,
         )
@@ -166,7 +166,7 @@ def test_retrieval_mode_defaults_to_fts(monkeypatch: pytest.MonkeyPatch) -> None
     settings = Settings(
         _env_file=None,
         database_url="postgresql://docta:secret@localhost:5432/docta",
-        minio_health_url="http://localhost:9000/health",
+        storage_health_url="http://localhost:9000/health",
     )
 
     assert settings.retrieval_mode == "fts"
@@ -178,7 +178,7 @@ def test_retrieval_mode_rejects_unsupported_values(value: str) -> None:
         Settings(
             _env_file=None,
             database_url="postgresql://docta:secret@localhost:5432/docta",
-            minio_health_url="http://localhost:9000/health",
+            storage_health_url="http://localhost:9000/health",
             retrieval_mode=value,  # type: ignore[arg-type]
         )
 
@@ -187,7 +187,7 @@ def embed_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "_env_file": None,
         "database_url": "postgresql://docta:secret@localhost:5432/docta",
-        "minio_health_url": "http://localhost:9000/health",
+        "storage_health_url": "http://localhost:9000/health",
         "embed_endpoint_url": "https://embed.test/v1/embeddings",
         "embed_model": "vendor/model",
         "embed_api_key": "embed-secret",
@@ -209,6 +209,12 @@ def production(**overrides: object) -> Settings:
     )
 
 
+def test_public_storage_endpoint_requires_https_in_production() -> None:
+    with pytest.raises(ValidationError, match="requires HTTPS"):
+        production(s3_public_endpoint_url="http://storage.example.test")
+    assert production(s3_public_endpoint_url="https://storage.example.test")
+
+
 def test_embedder_defaults_and_secret_key() -> None:
     settings = embed_settings()
 
@@ -225,7 +231,7 @@ def test_embedder_absent_by_default() -> None:
     settings = Settings(
         _env_file=None,
         database_url="postgresql://docta:secret@localhost:5432/docta",
-        minio_health_url="http://localhost:9000/health",
+        storage_health_url="http://localhost:9000/health",
     )
 
     assert not settings.embedder_configured
@@ -249,7 +255,7 @@ def test_dense_requires_embedder() -> None:
         Settings(
             _env_file=None,
             database_url="postgresql://docta:secret@localhost:5432/docta",
-            minio_health_url="http://localhost:9000/health",
+            storage_health_url="http://localhost:9000/health",
             retrieval_mode="dense",
         )
     settings = embed_settings(retrieval_mode="dense", dense_max_distance=0.4)

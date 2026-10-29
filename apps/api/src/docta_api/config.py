@@ -42,12 +42,13 @@ class Settings(BaseSettings):
 
     environment: Literal["development", "test", "production"] = "development"
     database_url: PostgresDsn
-    minio_health_url: AnyHttpUrl
+    storage_health_url: AnyHttpUrl
     dependency_timeout_seconds: int = Field(default=2, gt=0, le=30)
     oidc_issuer: OIDCIssuerUrl | None = None
     oidc_audience: str | None = Field(default=None, min_length=1)
     oidc_jwks_url: AnyHttpUrl | None = None
     s3_endpoint_url: AnyHttpUrl | None = None
+    s3_public_endpoint_url: AnyHttpUrl | None = None
     s3_access_key: str | None = Field(default=None, min_length=1)
     s3_secret_key: SecretStr | None = None
     s3_bucket: str = Field(default="docta-documents", min_length=3, max_length=63)
@@ -174,6 +175,11 @@ class Settings(BaseSettings):
             raise ValueError("S3 endpoint, access key and secret key must be configured together")
         if self.environment == "production" and configured_storage_values == 0:
             raise ValueError("S3-compatible object storage is required in production")
+        if self.s3_public_endpoint_url is not None:
+            if configured_storage_values != len(storage_values):
+                raise ValueError("Public S3 endpoint requires configured object storage")
+            if self.environment == "production" and self.s3_public_endpoint_url.scheme != "https":
+                raise ValueError("Public S3 endpoint requires HTTPS in production")
         if self.chunk_overlap_characters >= self.chunk_size_characters:
             raise ValueError("chunk overlap must be smaller than chunk size")
         return self

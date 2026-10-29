@@ -1,7 +1,7 @@
 # Docta
 
 Docta is a course-scoped pedagogical RAG tutor. It is a modular monolith with a Next.js web
-application/BFF, a FastAPI API, PostgreSQL, MinIO, and a separate ingestion worker that uses
+application/BFF, a FastAPI API, PostgreSQL, RustFS, and a separate ingestion worker that uses
 Redis Streams. ZITADEL provides local identity and OIDC tokens; Docta remains responsible for
 course authorization, memberships, and private conversations.
 
@@ -19,7 +19,7 @@ caches can have incompatible permissions.
 
 The host needs Docker Engine or Docker Desktop with Compose 2.24.4 or newer. With Docker
 Desktop, enable the WSL distribution under **Resources → WSL Integration**. Host networking is
-used so the browser callback, OIDC issuer, and signed MinIO URLs use the same loopback addresses.
+used so the browser callback, OIDC issuer, and signed RustFS URLs use the same loopback addresses.
 
 Open a clone in VS Code with **Dev Containers: Reopen in Container**, or start it from a host
 terminal with the Dev Containers CLI:
@@ -61,6 +61,50 @@ The container's first `postCreateCommand` installs locked dependencies and Chrom
 `postStartCommand` is read-only: it prints status and the next command, but does not provision
 ZITADEL, migrate PostgreSQL, start application servers, or ask for secrets.
 
+RustFS uses a new volume; existing MinIO objects are not imported. Existing managed profiles
+retain their storage credentials and ports through legacy aliases, without rewriting the profile.
+For native Compose, update the ignored root `.env` using `.env.example` and set the RustFS
+credentials and `DOCTA_STORAGE_HEALTH_URL`; the native and managed stacks remain separate.
+
+## Single-VM deployment
+
+`infra/compose.vm.yaml` prepares PostgreSQL, Redis, RustFS, migrations, API, worker, web and a
+Caddy HTTPS proxy on one Linux VM. This is an initial deployment path, not a verified production
+environment: public DNS/certificate issuance, a real identity provider, backups and restore
+have not been tested. Use a dedicated VM and protect all persistent volumes and private files.
+
+Prerequisites: Docker Engine with Compose 2.24.4+, the Dev Containers CLI, two distinct DNS names
+pointing to the VM, inbound TCP 80/443, and an existing HTTPS OIDC provider. Register a public Authorization
+Code + PKCE client with callback `https://<web-domain>/auth/callback`; obtain the issuer, JWKS
+URL, audience/project ID and client ID. The default scopes target ZITADEL. Other providers may
+need `DOCTA_WEB_OIDC_SCOPES` in the optional `.env.vm.web` file.
+
+From the checkout on the VM, start the dev container, initialize the private profile inside it,
+and start the stack:
+
+```bash
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . python3 scripts/init_vm.py \
+  --web-domain app.example.com --storage-domain storage.example.com \
+  --issuer https://identity.example.com --jwks https://identity.example.com/oauth/v2/keys \
+  --audience YOUR_PROJECT_ID --client-id YOUR_PUBLIC_CLIENT_ID
+devcontainer exec --workspace-folder . docker compose --env-file .env.vm -f infra/compose.vm.yaml up -d --build --wait
+```
+
+Replace every example with real values. The initializer generates credentials once in `.env.vm`
+with owner-only permissions and refuses to replace an existing profile or silently accept changed
+domain/identity settings. Save the file and volumes securely; losing them prevents recovery. The
+proxy obtains certificates automatically when DNS and ports are reachable. Only the proxy exposes
+ports; storage, databases and the API use the private Compose network. The API signs upload URLs
+for the public storage hostname, and the proxy preserves the host and path. Proxy error logs omit
+request and error details to avoid recording signed URLs or authorization callback data.
+
+For an optional model, configure `DOCTA_TUTOR_*` in an owner-only `.env.vm.api`. Dense retrieval
+requires matching `DOCTA_EMBED_*` settings in both `.env.vm.api` and `.env.vm.worker`, plus the
+API retrieval mode and distance threshold. These files are ignored by Git. Restart with the same
+Compose command after configuration changes. Provision a backup and test restoration before
+depending on VM data; this repository does not yet automate that operation.
+
 ## Two development flows
 
 Run all commands in the following sections in a terminal inside the dev container.
@@ -75,8 +119,11 @@ npm run dev:all
 ```
 
 If no managed profile exists, `dev:setup` opens the interactive configuration assistant first.
+For a new local profile, `npm run dev:setup -- --defaults` selects generated credentials without
+prompting and stores them privately. Existing profiles are never replaced.
+
 After configuration it starts the isolated ZITADEL/Login V2 stack, provisions Docta's public
-OIDC Web application, starts PostgreSQL, Redis, and MinIO, and applies migrations. It does not
+OIDC Web application, starts PostgreSQL, Redis, and RustFS, and applies migrations. It does not
 start the API, worker, or web development servers; `dev:all` does that after setup succeeds.
 No LLM request is made during setup.
 
@@ -92,7 +139,7 @@ by running services.
 The assistant is intentionally developer-controlled. The generated values are defaults, not
 mandatory credentials. Press Enter to accept a displayed default. Secret prompts are hidden;
 press Enter there to keep the generated secret. You may choose your own administrator login and
-password, database roles and passwords, MinIO credentials, ZITADEL database credentials, IAM
+password, database roles and passwords, RustFS credentials, ZITADEL database credentials, IAM
 organization/project/application names, service-account names, and local ports. The administrator
 password must satisfy ZITADEL's local policy. Values are validated before the private profile is
 published.
@@ -104,15 +151,16 @@ The first-run defaults are:
 | ZITADEL administrator | `developer-<suffix>@docta.local`, with a generated hidden password |
 | Docta PostgreSQL role/database | `docta_<suffix>` / `docta_<suffix>`, with a generated password |
 | ZITADEL PostgreSQL role/database | `iam_<suffix>` / `iam_<suffix>`, with a generated password |
-| MinIO access key/bucket | `docta-<suffix>` / `docta-documents-<suffix>`, with a generated secret key |
+| RustFS access key/bucket | `docta-<suffix>` / `docta-documents-<suffix>`, with a generated secret key |
 | ZITADEL organization/project/application | `Docta Development <suffix>` / `Docta Dev <suffix>` / `Docta PKCE <suffix>` |
 | Provisioning and Login V2 accounts | `bootstrap-<suffix>` / `login-<suffix>` |
 | Tutor | `none` (no provider, model, or API key is selected) |
+| Embeddings | `none` (no endpoint, model, dimensions, or API key is selected) |
 | Web / API | `http://127.0.0.1:13000` / `http://127.0.0.1:18000` |
 | ZITADEL issuer / console | `http://localhost:18080` / `http://localhost:18080/ui/console` |
 | Helper callback | `http://127.0.0.1:18765/callback` |
 | PostgreSQL / Redis | `15432` / `16379` |
-| MinIO API / console | `19000` / `19001` |
+| RustFS API / console | `19000` / `19001` |
 
 `<suffix>` is generated for the profile. It prevents accidental name collisions when creating a
 new environment; it is not a password. The wizard can also generate all infrastructure values
@@ -126,7 +174,7 @@ After setup, reopening the container does not repeat setup. Start the existing e
 npm run dev:all
 ```
 
-This command starts the existing managed ZITADEL, PostgreSQL, Redis, and MinIO containers,
+This command starts the existing managed ZITADEL, PostgreSQL, Redis, and RustFS containers,
 checks public OIDC discovery and signing keys, verifies that the database schema matches the
 current checkout, and runs the API, ingestion worker, and web application. It does not create
 IAM resources and does not run migrations. If containers are missing or the schema belongs to a
@@ -149,7 +197,7 @@ The lifecycle commands are:
 
 | Command | Effect |
 | --- | --- |
-| `npm run dev:configure` | Interactive configuration only. It never starts services, runs migrations, or calls the tutor. On an existing profile it preserves infrastructure credentials and identity and edits tutor settings. |
+| `npm run dev:configure` | Interactive configuration only. It never starts services, runs migrations, or calls model providers. On an existing profile it preserves infrastructure credentials and identity and edits tutor, embedding, and retrieval settings. |
 | `npm run dev:setup` | First-run configuration when needed, ZITADEL provisioning, infrastructure startup, and migrations. |
 | `npm run dev:all` | Daily startup and schema/OIDC checks, then API + worker + web. No provisioning or migrations. |
 | `npm run dev:status` | Read-only configuration and Docker service status. It never changes identity or data. |
@@ -205,8 +253,8 @@ The profile is private and contains:
 | `DOCTA_DEV_IAM_MASTERKEY` | ZITADEL encryption key; preserve it with the IAM database |
 | `DOCTA_WEB_SESSION_SECRET` | Docta browser-session key; preserve it for existing sessions |
 
-Changing a value in `.env` does not rotate a password already stored by PostgreSQL, ZITADEL, or
-MinIO. Restore the original managed profile when reusing existing volumes. Rotate credentials in
+Changing a value in `.env` does not rotate a password already stored by PostgreSQL or ZITADEL.
+Restore the original managed profile when reusing existing volumes. Rotate credentials in
 the service's administration flow, then update the matching private configuration. The initial
 provisioning PAT expires according to `DOCTA_DEV_PAT_EXPIRATION` (one year by default); changing
 that field later does not renew an already-issued token. Do not regenerate infrastructure
@@ -232,7 +280,7 @@ The import refuses to replace an existing shared profile and never generates cre
 ### Identity recovery
 
 If both the IAM and Docta data volumes were intentionally deleted, saved ZITADEL IDs refer to the
-old instance. After confirming that the Docta PostgreSQL, MinIO, and Redis volumes are absent,
+old instance. After confirming that the Docta PostgreSQL, RustFS, and Redis volumes are absent,
 run:
 
 ```bash
@@ -255,7 +303,7 @@ With `npm run dev:all` running, the default addresses are:
 | API docs | <http://127.0.0.1:18000/docs> |
 | API liveness/readiness | `/api/v1/health/live` and `/api/v1/health/ready` on the API address |
 | ZITADEL console | <http://localhost:18080/ui/console> |
-| MinIO API / console | <http://127.0.0.1:19000> / <http://127.0.0.1:19001> |
+| RustFS API / console | <http://127.0.0.1:19000> / <http://127.0.0.1:19001> |
 
 Sign in, create a course, upload a digital text PDF, wait for indexing, and publish the indexed
 corpus. Ask a question supported by the material and inspect the citations. Try an unsupported
@@ -340,13 +388,26 @@ opt-in and ranks chunks of the active corpus by embedding similarity.
   tutor's responsibility.
 - `:free` model variants are rejected in production.
 - Keys belong only in the private profile. In the dev container that is
-  `/var/lib/docta-dev/.env`; `npm run dev:configure` manages only the tutor variables, so add the
-  embedder variables to that file by hand. Never place keys in versioned files.
+  `/var/lib/docta-dev/.env`; use `npm run dev:configure`, keep the existing tutor, and select
+  `configure` for embeddings. Enter the full embeddings endpoint, model, hidden API key,
+  dimensions, timeout, batch size, input type, query/document templates and optional provisional
+  threshold separately from the tutor. With an unchanged endpoint, Enter retains the saved key;
+  a changed endpoint requires a key. Configuration makes no model request. Existing provider
+  routing is retained only for the same endpoint. Never place keys in versioned files.
+- Select `dense` as the retrieval mode in `npm run dev:configure` to opt in; `fts` remains the
+  default. Dense requires the complete embedder and a calibrated distance threshold. The sum of
+  embedding and tutor timeouts must be strictly less than the message deadline (at most 180s);
+  the assistant asks for a compatible tutor timeout when necessary. Selecting dense without an
+  embedder fails validation and preserves the private profile. Existing corpora need matching
+  embeddings before dense retrieval can use them.
+- `dev:all` runs both API and worker in the dev container, so they share the endpoint. A worker
+  started separately with Compose has its own network namespace: `127.0.0.1` then refers to the
+  worker container. Configure an address reachable by both processes for that deployment.
 - The PostgreSQL image with pgvector is rebuilt by `npm run dev:setup` and by the checks.
 
 ## Ingestion and durability
 
-The API authorizes a direct MinIO upload, verifies the object and checksum, and records the
+The API authorizes a direct RustFS upload, verifies the object and checksum, and records the
 document version and job in PostgreSQL. The worker extracts text with PyMuPDF, creates page-aware
 chunks, and publishes a READY immutable corpus. Redis Streams transports the job; PostgreSQL's
 outbox and job tables are canonical. Activation uses compare-and-swap and only succeeds for an
@@ -373,7 +434,7 @@ npm run check:dev
 ```
 
 It runs Python unit tests, Ruff, web lint/tests/build, and `git diff --check`. The full check adds
-the worker image and serial PostgreSQL/MinIO/Redis integration and browser suites using isolated
+the worker image and serial PostgreSQL/RustFS/Redis integration and browser suites using isolated
 test resources:
 
 ```bash
@@ -394,6 +455,11 @@ npm run dev:status
 ```
 
 Common cases:
+
+- **ZITADEL port already in use**: in VS Code's Ports panel, stop forwarding port `18080` if it
+  is auto-forwarded, then rerun `npm run dev:setup`. Otherwise stop the conflicting listener.
+  The dev container settings ignore auto-forwarding for the default IAM port after the container
+  is rebuilt. For a customized IAM port, disable forwarding for that port as well.
 
 - **“Run `npm run dev:configure` first”**: configure the private profile, then run setup.
 - **Existing volumes but missing configuration**: restore the original `/var/lib/docta-dev/.env`

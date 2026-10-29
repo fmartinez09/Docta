@@ -45,7 +45,7 @@ def test_existing_environment_does_not_require_volume_inspection(tmp_path, monke
     assert path.read_text() == "existing private configuration"
 
 
-@pytest.mark.parametrize("volume", ["docta-dev-iam_postgres-data", "docta-dev_minio-data"])
+@pytest.mark.parametrize("volume", ["docta-dev-iam_postgres-data", "docta-dev_rustfs-data"])
 def test_missing_environment_with_existing_data_fails_before_creation(
     tmp_path, monkeypatch, volume
 ):
@@ -139,10 +139,53 @@ def test_fresh_profile_does_not_copy_host_credentials_and_keeps_stable_secrets(t
     assert "CUSTOM_VALUE" not in first
     assert "DOCTA_TUTOR_API_KEY" not in first
     assert "127.0.0.1:15432/" in first["DOCTA_DATABASE_URL"]
-    assert first["DOCTA_S3_SECRET_KEY"] == first["MINIO_ROOT_PASSWORD"]
+    assert first["DOCTA_S3_SECRET_KEY"] == first["RUSTFS_SECRET_KEY"]
     assert len(first["DOCTA_DEV_IAM_MASTERKEY"]) == 32
     assert len(first["DOCTA_WEB_SESSION_SECRET"]) >= 32
     assert "DOCTA_OIDC_AUDIENCE" not in first
+
+
+def test_legacy_storage_profile_is_reused_without_changing_private_file(tmp_path):
+    profile = save_profile(tmp_path)
+    path = tmp_path / ".devcontainer/.env"
+    legacy = {
+        "MINIO_ROOT_USER": profile.pop("RUSTFS_ACCESS_KEY"),
+        "MINIO_ROOT_PASSWORD": profile.pop("RUSTFS_SECRET_KEY"),
+        "MINIO_API_PORT": profile.pop("RUSTFS_API_PORT"),
+        "MINIO_CONSOLE_PORT": profile.pop("RUSTFS_CONSOLE_PORT"),
+    }
+    profile.pop("DOCTA_STORAGE_HEALTH_URL")
+    dev.update_env(path, legacy, remove=(
+        "RUSTFS_ACCESS_KEY", "RUSTFS_SECRET_KEY", "RUSTFS_API_PORT",
+        "RUSTFS_CONSOLE_PORT", "DOCTA_STORAGE_HEALTH_URL",
+    ))
+    original = path.read_bytes()
+    loaded = dev.initialize(tmp_path)
+    assert loaded["RUSTFS_ACCESS_KEY"] == legacy["MINIO_ROOT_USER"]
+    assert loaded["RUSTFS_SECRET_KEY"] == legacy["MINIO_ROOT_PASSWORD"]
+    assert loaded["DOCTA_STORAGE_HEALTH_URL"].endswith("/health/ready")
+    assert path.read_bytes() == original
+
+
+def test_conflicting_old_and_new_storage_credentials_fail_closed(tmp_path):
+    save_profile(tmp_path)
+    path = tmp_path / ".devcontainer/.env"
+    dev.update_env(path, {"MINIO_ROOT_PASSWORD": "different-secret"})
+    with pytest.raises(dev.DevError, match="Conflicting legacy and RustFS"):
+        dev.initialize(tmp_path)
+
+
+def test_defaults_create_private_profile_only_once(tmp_path, monkeypatch):
+    (tmp_path / ".env.example").write_text((dev.ROOT / ".env.example").read_text())
+    monkeypatch.setattr(dev, "guard_environment_creation", lambda root: None)
+    first = dev.configure(tmp_path, defaults=True)
+    path = tmp_path / ".devcontainer/.env"
+    original = path.read_bytes()
+    assert first == dev.initialize(tmp_path)
+    assert not first.get("DOCTA_TUTOR_API_KEY")
+    with pytest.raises(dev.DevError, match="cannot replace"):
+        dev.configure(tmp_path, defaults=True)
+    assert path.read_bytes() == original
 
 
 def test_clean_checkout_uses_example_and_rejects_unmanaged_file(tmp_path):
@@ -568,6 +611,20 @@ def test_iam_failure_remains_safe_when_log_inspection_times_out(monkeypatch):
     assert "private-pat" not in str(error.value)
 
 
+def test_iam_port_conflict_reports_action_without_exposing_docker_error(monkeypatch):
+    def fail(*args, **kwargs):
+        cause = subprocess.CalledProcessError(
+            1, ["docker"], stderr="ports are not available: private-docker-payload"
+        )
+        raise dev.DevError("Command failed (docker)") from cause
+
+    monkeypatch.setattr(dev, "run", fail)
+    with pytest.raises(dev.DevError, match="port 18080 is already in use") as error:
+        dev.start_iam({"DOCTA_DEV_IAM_PORT": "18080"})
+    assert "VS Code's Ports panel" in str(error.value)
+    assert "private-docker-payload" not in str(error.value)
+
+
 def test_full_checks_flag_and_managed_command_environment(monkeypatch):
     monkeypatch.setattr(dev, "guard_environment_creation", lambda: None)
     monkeypatch.setattr(dev, "initialize", lambda: {"LOCAL": "managed"})
@@ -604,7 +661,7 @@ def test_checks_remove_development_credentials_and_keep_test_ports(monkeypatch):
             "DOCTA_DATABASE_URL": (
                 "postgresql://docta_test:docta_test_only@127.0.0.1:25432/postgres"
             ),
-            "DOCTA_MINIO_HEALTH_URL": "http://127.0.0.1:59000/minio/health/ready",
+            "DOCTA_STORAGE_HEALTH_URL": "http://127.0.0.1:59000/health/ready",
         }
         assert options["inherit_identity"] is False
 
@@ -643,6 +700,21 @@ def test_full_check_builds_test_stack_images(monkeypatch):
     assert test_up[-4:] == ["up", "-d", "--build", "--wait"]
 
 
+def test_full_check_worker_build_has_only_required_context(monkeypatch):
+    observed = []
+
+    def capture(command, env, **kwargs):
+        if command[:2] == ["docker", "build"] and "docta-worker:latest" in command:
+            context = Path(command[-1])
+            observed.append({path.name for path in context.iterdir()})
+            assert (context / "apps/api/src/docta_api/worker.py").is_file()
+            assert not list(context.rglob("*.pyc"))
+
+    monkeypatch.setattr(dev, "run", capture)
+    dev.check({}, full=True)
+    assert observed == [{"pyproject.toml", "uv.lock", "apps"}]
+
+
 def test_first_configuration_accepts_own_accounts_and_google_without_starting_services(
     tmp_path, monkeypatch, capsys
 ):
@@ -671,6 +743,8 @@ def test_first_configuration_accepts_own_accounts_and_google_without_starting_se
             "60",
             "90",
             "4000",
+            "none",
+            "fts",
         ],
         [
             "Teacher1!private",
@@ -781,7 +855,10 @@ def test_existing_configuration_preserves_identity_and_credentials_when_switchin
     previous = path.read_bytes()
     identity = path.parent / "state/identity.json"
     dev.private_write(identity, '{"project_id":"101","app_id":"202"}\n')
-    interactive(monkeypatch, ["google", "", "my-model", "45", "90", "2000"], ["new-private-key"])
+    interactive(
+        monkeypatch, ["google", "", "my-model", "45", "90", "2000", "keep", "fts"],
+        ["new-private-key"]
+    )
     updated = dev.configure(tmp_path)
     for key, value in profile.items():
         if not key.startswith("DOCTA_TUTOR_"):
@@ -812,6 +889,8 @@ def test_invalid_reconfiguration_does_not_change_environment_or_state(
             "90",
             "90",
             "2000",
+            "keep",
+            "fts",
         ],
         ["private-input-key"],
     )
@@ -836,11 +915,112 @@ def test_disabling_tutor_removes_key_instead_of_retaining_old_provider(tmp_path,
             )
         ),
     )
-    interactive(monkeypatch, ["none"], [])
+    interactive(monkeypatch, ["none", "keep", "fts"], [])
     profile = dev.configure(tmp_path)
     assert all(key not in profile for key in dev.TUTOR_FIELDS)
     assert "old-private-key" not in path.read_text()
     assert dev.initialize(tmp_path) == profile
+
+
+def test_embedding_configuration_is_independent_and_preserves_identity(
+    tmp_path, monkeypatch, capsys
+):
+    original = save_profile(tmp_path)
+    interactive(
+        monkeypatch,
+        ["keep", "configure", "http://127.0.0.1:8085/v1/embeddings", "embedding-model",
+         "3072", "30", "1", "off", "task: question answering | query: {text}",
+         "title: none | text: {text}", "0.78", "fts"],
+        ["embedding-secret"],
+    )
+    updated = dev.configure(tmp_path)
+    assert updated["DOCTA_EMBED_API_KEY"] == "embedding-secret"
+    assert updated["DOCTA_EMBED_MODEL"] == "embedding-model"
+    assert updated["DOCTA_EMBED_DIMENSIONS"] == "3072"
+    assert updated["DOCTA_DENSE_MAX_DISTANCE"] == "0.78"
+    assert updated.get("DOCTA_RETRIEVAL_MODE", "fts") == "fts"
+    assert updated["DOCTA_DEV_IAM_MASTERKEY"] == original["DOCTA_DEV_IAM_MASTERKEY"]
+    assert dev.initialize(tmp_path) == updated
+    assert "embedding-secret" not in capsys.readouterr().out
+
+
+def test_embedding_reconfiguration_and_disable_respect_dense_requirements(tmp_path, monkeypatch):
+    profile = save_profile(tmp_path)
+    profile.update({
+        "DOCTA_EMBED_ENDPOINT_URL": "http://localhost:8085/v1/embeddings",
+        "DOCTA_EMBED_MODEL": "model", "DOCTA_EMBED_API_KEY": "old-secret",
+        "DOCTA_EMBED_DIMENSIONS": "3072", "DOCTA_DENSE_MAX_DISTANCE": "0.78",
+        "DOCTA_RETRIEVAL_MODE": "dense",
+    })
+    path = tmp_path / ".devcontainer/.env"
+    dev.update_env(path, profile)
+    before = path.read_bytes()
+    interactive(monkeypatch, ["keep", "none", "dense"], [])
+    with pytest.raises(dev.DevError, match="Dense retrieval requires"):
+        dev.configure(tmp_path)
+    assert path.read_bytes() == before
+    dev.update_env(path, {"DOCTA_RETRIEVAL_MODE": "fts"})
+    interactive(monkeypatch, ["keep", "none", "fts"], [])
+    updated = dev.configure(tmp_path)
+    assert all(key not in updated for key in dev.EMBED_FIELDS)
+    assert "old-secret" not in path.read_text()
+
+
+def test_enable_dense_from_existing_profile_preserves_keys_and_requires_valid_timeout(
+    tmp_path, monkeypatch, capsys
+):
+    profile = save_profile(tmp_path)
+    profile.update({
+        "DOCTA_EMBED_ENDPOINT_URL": "http://localhost:8085/v1/embeddings",
+        "DOCTA_EMBED_MODEL": "model", "DOCTA_EMBED_API_KEY": "embedding-secret",
+        "DOCTA_EMBED_DIMENSIONS": "3072", "DOCTA_EMBED_TIMEOUT_SECONDS": "60",
+        "DOCTA_DENSE_MAX_DISTANCE": "0.78", "DOCTA_TUTOR_TIMEOUT_SECONDS": "179",
+        "DOCTA_MESSAGE_TIMEOUT_SECONDS": "180",
+    })
+    path = tmp_path / ".devcontainer/.env"
+    dev.update_env(path, profile)
+    interactive(monkeypatch, ["keep", "keep", "dense", "120", "119"], [])
+    updated = dev.configure(tmp_path)
+    assert updated["DOCTA_RETRIEVAL_MODE"] == "dense"
+    assert updated["DOCTA_TUTOR_TIMEOUT_SECONDS"] == "119"
+    assert updated["DOCTA_EMBED_API_KEY"] == "embedding-secret"
+    assert updated["DOCTA_EMBED_TIMEOUT_SECONDS"] == "60"
+    assert updated["DOCTA_DEV_IAM_MASTERKEY"] == profile["DOCTA_DEV_IAM_MASTERKEY"]
+    assert dev.initialize(tmp_path) == updated
+    output = capsys.readouterr().out
+    assert "between 1 and 119" in output
+    assert "embedding-secret" not in output
+
+
+def test_dense_mode_requests_missing_threshold(monkeypatch):
+    values = {
+        "DOCTA_EMBED_ENDPOINT_URL": "https://example.test/embeddings",
+        "DOCTA_EMBED_MODEL": "model", "DOCTA_EMBED_API_KEY": "secret",
+        "DOCTA_EMBED_DIMENSIONS": "3072",
+    }
+    interactive(monkeypatch, ["dense", "0.78"], [])
+    updated = dev.configure_retrieval(values)
+    assert updated["DOCTA_DENSE_MAX_DISTANCE"] == "0.78"
+    assert updated["DOCTA_RETRIEVAL_MODE"] == "dense"
+
+
+@pytest.mark.parametrize("change_endpoint", [False, True])
+def test_embedding_key_is_reused_only_with_the_same_endpoint(monkeypatch, change_endpoint):
+    values = {
+        "DOCTA_EMBED_ENDPOINT_URL": "http://localhost:8085/v1/embeddings",
+        "DOCTA_EMBED_MODEL": "model", "DOCTA_EMBED_API_KEY": "old-secret",
+        "DOCTA_EMBED_DIMENSIONS": "3072",
+    }
+    endpoint = "http://localhost:9999/v1/embeddings" if change_endpoint else ""
+    secret = "new-secret" if change_endpoint else ""
+    interactive(monkeypatch, ["configure", endpoint, "", "", "", "", "", "", "", ""], [secret])
+    updated = dev.configure_embeddings(values, existing=True)
+    assert updated["DOCTA_EMBED_API_KEY"] == ("new-secret" if change_endpoint else "old-secret")
+
+
+def test_yes_no_prompt_accepts_short_answers(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    assert dev.prompt("Customize?", "no", choices=("yes", "no")) == "no"
 
 
 def test_legacy_profile_backfills_in_memory_without_changing_existing_secrets(tmp_path):
@@ -887,7 +1067,7 @@ def test_custom_ports_propagate_to_oidc_uploads_and_server_origins(tmp_path):
     assert profile["DOCTA_WEB_ORIGIN"] == "http://127.0.0.1:21000"
     assert profile["DOCTA_OIDC_ISSUER"] == "http://localhost:21002"
     assert profile["DOCTA_S3_ENDPOINT_URL"] == "http://127.0.0.1:21006"
-    profile["POSTGRES_PORT"] = profile["MINIO_API_PORT"]
+    profile["POSTGRES_PORT"] = profile["RUSTFS_API_PORT"]
     with pytest.raises(dev.DevError, match="distinct"):
         dev.validate_environment(profile)
 
@@ -940,7 +1120,7 @@ def test_managed_api_and_token_helper_do_not_fall_back_to_root_environment(tmp_p
     environment |= {
         "DOCTA_DEV_MANAGED": "1",
         "DOCTA_DATABASE_URL": "postgresql://unit:unit@127.0.0.1:5432/unit",
-        "DOCTA_MINIO_HEALTH_URL": "http://127.0.0.1:9000/minio/health/ready",
+        "DOCTA_STORAGE_HEALTH_URL": "http://127.0.0.1:9000/health/ready",
         "DOCTA_DEV_OIDC_CLIENT_ID": "synthetic-client",
         "PYTHONPATH": str(Path(dev.ROOT) / "apps/api/src"),
     }

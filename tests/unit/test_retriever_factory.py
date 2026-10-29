@@ -14,7 +14,7 @@ def _settings(**values: object) -> Settings:
     return Settings(
         _env_file=None,
         database_url=DATABASE_URL,
-        minio_health_url="http://localhost:9000/health",
+        storage_health_url="http://localhost:9000/health",
         **values,  # type: ignore[arg-type]
     )
 

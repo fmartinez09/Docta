@@ -21,6 +21,8 @@ PERSISTED_FIELDS = (
     "POSTGRES_DB",
     "MINIO_ROOT_USER",
     "MINIO_ROOT_PASSWORD",
+    "RUSTFS_ACCESS_KEY",
+    "RUSTFS_SECRET_KEY",
     "DOCTA_S3_BUCKET",
     "DOCTA_DEV_IAM_DB_USER",
     "DOCTA_DEV_IAM_DB_PASSWORD",
@@ -93,6 +95,12 @@ def _managed_values(path: Path) -> dict[str, str | None]:
     values = dict(dotenv_values(path, interpolate=False))
     if values.get("DOCTA_DEV_MANAGED") != "1":
         raise StateError("Existing development configuration is not managed; preserve it first.")
+    for old, new in (("MINIO_ROOT_USER", "RUSTFS_ACCESS_KEY"),
+                     ("MINIO_ROOT_PASSWORD", "RUSTFS_SECRET_KEY")):
+        if old in values and new in values and values[old] != values[new]:
+            raise StateError("Legacy and RustFS credentials disagree; profiles were preserved.")
+        if old in values:
+            values.setdefault(new, values[old])
     return values
 
 

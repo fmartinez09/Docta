@@ -12,9 +12,56 @@ from alembic.config import Config
 from docta_api.config import Settings
 from docta_api.identity import AuthenticatedIdentity, DeterministicIdentityProvider
 from docta_api.main import create_app
+from docta_api.object_storage import ObjectStorageUnavailable
 from docta_api.s3_object_storage import S3ObjectStorage
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.anyio
+async def test_public_storage_endpoint_signs_browser_upload() -> None:
+    settings = _settings()
+    assert settings.s3_endpoint_url is not None
+    assert settings.s3_secret_key is not None
+    internal = str(settings.s3_endpoint_url).rstrip("/")
+    public = internal.replace("127.0.0.1", "localhost")
+    storage = S3ObjectStorage(
+        endpoint_url=internal, public_endpoint_url=public,
+        access_key=settings.s3_access_key, secret_key=settings.s3_secret_key.get_secret_value(),
+        bucket=settings.s3_bucket, region=settings.s3_region,
+        upload_ttl_seconds=300, timeout_seconds=5,
+    )
+    data = b"public endpoint test"
+    upload = storage.create_upload_authorization(
+        storage_key="public-endpoint-test", media_type="application/pdf",
+        sha256=sha256(data).hexdigest(),
+    )
+    assert upload.url.startswith(public + "/")
+    async with httpx.AsyncClient(trust_env=False) as client:
+        response = await client.put(upload.url, headers=upload.headers, content=data)
+    assert response.status_code == 200
+    metadata = storage.inspect("public-endpoint-test")
+    assert metadata.version_id is not None
+    assert storage.read(
+        "public-endpoint-test", version_id=metadata.version_id, max_bytes=1024
+    ) == data
+
+
+def test_storage_metadata_names_are_case_insensitive(monkeypatch) -> None:
+    storage = _storage(_settings())
+    monkeypatch.setattr(storage._client, "head_object", lambda **_: {
+        "ContentLength": 4,
+        "ContentType": "application/pdf",
+        "Metadata": {"Sha256": "expected-digest"},
+        "VersionId": "version-1",
+    })
+    assert storage.inspect("synthetic").metadata == {"sha256": "expected-digest"}
+    monkeypatch.setattr(storage._client, "head_object", lambda **_: {
+        "ContentLength": 4,
+        "Metadata": {"Sha256": "one", "sha256": "other"},
+    })
+    with pytest.raises(ObjectStorageUnavailable):
+        storage.inspect("synthetic")
 
 
 @pytest.mark.anyio

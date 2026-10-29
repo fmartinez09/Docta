@@ -19,7 +19,7 @@ from docta_api.database import Database
 from docta_api.documents import DocumentService
 from docta_api.documents import router as documents_router
 from docta_api.embedding_http import build_embedder
-from docta_api.health import MinioProbe, PostgresProbe, ReadinessProbes
+from docta_api.health import ObjectStorageProbe, PostgresProbe, ReadinessProbes
 from docta_api.identity import (
     IdentityProvider,
     OIDCJWTIdentityProvider,
@@ -57,8 +57,8 @@ def _default_probes(settings: Settings) -> ReadinessProbes:
             database_url=str(settings.database_url),
             timeout_seconds=settings.dependency_timeout_seconds,
         ),
-        object_storage=MinioProbe(
-            health_url=str(settings.minio_health_url),
+        object_storage=ObjectStorageProbe(
+            health_url=str(settings.storage_health_url),
             timeout_seconds=settings.dependency_timeout_seconds,
         ),
     )
@@ -86,6 +86,9 @@ def _default_object_storage(settings: Settings) -> ObjectStorage:
     assert settings.s3_secret_key is not None
     return S3ObjectStorage(
         endpoint_url=str(settings.s3_endpoint_url),
+        public_endpoint_url=(
+            str(settings.s3_public_endpoint_url) if settings.s3_public_endpoint_url else None
+        ),
         access_key=settings.s3_access_key,
         secret_key=settings.s3_secret_key.get_secret_value(),
         bucket=settings.s3_bucket,

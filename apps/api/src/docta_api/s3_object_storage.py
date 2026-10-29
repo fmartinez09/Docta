@@ -25,23 +25,33 @@ class S3ObjectStorage:
         region: str,
         upload_ttl_seconds: int,
         timeout_seconds: float,
+        public_endpoint_url: str | None = None,
     ) -> None:
         self._bucket = bucket
         self._region = region
         self._upload_ttl_seconds = upload_ttl_seconds
+        client_config = Config(
+            signature_version="s3v4",
+            connect_timeout=timeout_seconds,
+            read_timeout=timeout_seconds,
+            retries={"max_attempts": 2, "mode": "standard"},
+            s3={"addressing_style": "path"},
+        )
         self._client: Any = boto3.client(
             "s3",
             endpoint_url=endpoint_url,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
             region_name=region,
-            config=Config(
-                signature_version="s3v4",
-                connect_timeout=timeout_seconds,
-                read_timeout=timeout_seconds,
-                retries={"max_attempts": 2, "mode": "standard"},
-                s3={"addressing_style": "path"},
-            ),
+            config=client_config,
+        )
+        self._presign_client: Any = self._client if public_endpoint_url is None else boto3.client(
+            "s3",
+            endpoint_url=public_endpoint_url,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=region,
+            config=client_config,
         )
 
     def create_upload_authorization(
@@ -57,7 +67,7 @@ class S3ObjectStorage:
             "x-amz-meta-sha256": sha256,
         }
         try:
-            url = self._client.generate_presigned_url(
+            url = self._presign_client.generate_presigned_url(
                 "put_object",
                 Params={
                     "Bucket": self._bucket,
@@ -86,10 +96,16 @@ class S3ObjectStorage:
             raise ObjectStorageUnavailable from error
         except BotoCoreError as error:
             raise ObjectStorageUnavailable from error
+        metadata: dict[str, str] = {}
+        for key, value in response.get("Metadata", {}).items():
+            name, content = str(key).lower(), str(value)
+            if name in metadata and metadata[name] != content:
+                raise ObjectStorageUnavailable
+            metadata[name] = content
         return StoredObjectMetadata(
             size_bytes=int(response["ContentLength"]),
             media_type=response.get("ContentType"),
-            metadata={str(key): str(value) for key, value in response.get("Metadata", {}).items()},
+            metadata=metadata,
             version_id=response.get("VersionId"),
         )
 

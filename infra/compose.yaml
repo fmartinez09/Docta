@@ -10,15 +10,15 @@ services:
     env_file: ../.env
     environment:
       DOCTA_DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB}
-      DOCTA_MINIO_HEALTH_URL: http://minio:9000/minio/health/ready
-      DOCTA_S3_ENDPOINT_URL: http://minio:9000
+      DOCTA_STORAGE_HEALTH_URL: http://rustfs:9000/health/ready
+      DOCTA_S3_ENDPOINT_URL: http://rustfs:9000
       DOCTA_REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      rustfs:
         condition: service_healthy
 
   redis:
@@ -53,25 +53,25 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    command: server /data --console-address ":9001"
+  rustfs:
+    image: rustfs/rustfs:1.0.4@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
+    restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
-      MINIO_API_CORS_ALLOW_ORIGIN: ${DOCTA_WEB_ORIGIN:-http://127.0.0.1:3000}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY}
+      RUSTFS_CORS_ALLOWED_ORIGINS: ${DOCTA_WEB_ORIGIN:-http://127.0.0.1:3000}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${RUSTFS_API_PORT:-9000}:9000"
+      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health/ready"]
       interval: 2s
       timeout: 3s
       retries: 15
     volumes:
-      - minio-data:/data
+      - rustfs-data:/data
 
 volumes:
   redis-data:
   postgres-data:
-  minio-data:
+  rustfs-data:

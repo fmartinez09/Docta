@@ -35,7 +35,7 @@ services:
       DOCTA_EMBED_PROVIDER_ROUTING:
   postgres:
     ports: !override ["127.0.0.1:${POSTGRES_PORT}:5432"]
-  minio:
+  rustfs:
     ports: !override
-      - "127.0.0.1:${MINIO_API_PORT}:9000"
-      - "127.0.0.1:${MINIO_CONSOLE_PORT}:9001"
+      - "127.0.0.1:${RUSTFS_API_PORT}:9000"
+      - "127.0.0.1:${RUSTFS_CONSOLE_PORT}:9001"

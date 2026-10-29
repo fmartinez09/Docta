@@ -27,7 +27,7 @@ class PostgresProbe:
 
 
 @dataclass(frozen=True)
-class MinioProbe:
+class ObjectStorageProbe:
     health_url: str
     timeout_seconds: float
 

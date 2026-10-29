@@ -18,7 +18,8 @@ sqlalchemy_database_url = database_url.replace(
     "postgresql+psycopg://",
     1,
 )
-config.set_main_option("sqlalchemy.url", sqlalchemy_database_url)
+# ConfigParser treats percent-encoded DSN characters as interpolation markers.
+config.set_main_option("sqlalchemy.url", sqlalchemy_database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 

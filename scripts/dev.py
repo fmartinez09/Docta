@@ -8,12 +8,14 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -39,10 +41,16 @@ PORT_DEFAULTS = {
     "DOCTA_DEV_CALLBACK_PORT": "18765",
     "POSTGRES_PORT": "15432",
     "REDIS_PORT": "16379",
-    "MINIO_API_PORT": "19000",
-    "MINIO_CONSOLE_PORT": "19001",
+    "RUSTFS_API_PORT": "19000",
+    "RUSTFS_CONSOLE_PORT": "19001",
 }
 TUTOR_FIELDS = ("DOCTA_TUTOR_ENDPOINT_URL", "DOCTA_TUTOR_MODEL", "DOCTA_TUTOR_API_KEY")
+EMBED_FIELDS = (
+    "DOCTA_EMBED_ENDPOINT_URL", "DOCTA_EMBED_MODEL", "DOCTA_EMBED_API_KEY",
+    "DOCTA_EMBED_DIMENSIONS", "DOCTA_EMBED_TIMEOUT_SECONDS", "DOCTA_EMBED_BATCH_SIZE",
+    "DOCTA_EMBED_QUERY_TEMPLATE", "DOCTA_EMBED_DOCUMENT_TEMPLATE", "DOCTA_EMBED_INPUT_TYPE",
+    "DOCTA_EMBED_PROVIDER_ROUTING", "DOCTA_DENSE_MAX_DISTANCE",
+)
 
 
 def profile_path(name: str, root: Path | None = None) -> Path:
@@ -119,7 +127,7 @@ class DeveloperSettings(Settings):
 
 def derived_values(values: dict[str, str]) -> dict[str, str]:
     issuer = f"http://localhost:{values['DOCTA_DEV_IAM_PORT']}"
-    storage = f"http://127.0.0.1:{values['MINIO_API_PORT']}"
+    storage = f"http://127.0.0.1:{values['RUSTFS_API_PORT']}"
     user, password, database = (
         quote(values[key], safe="") for key in ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB")
     )
@@ -136,9 +144,9 @@ def derived_values(values: dict[str, str]) -> dict[str, str]:
         "DOCTA_API_BASE_URL": f"http://127.0.0.1:{values['DOCTA_DEV_API_PORT']}",
         "DOCTA_WEB_ORIGIN": f"http://127.0.0.1:{values['DOCTA_DEV_WEB_PORT']}",
         "DOCTA_S3_ENDPOINT_URL": storage,
-        "DOCTA_MINIO_HEALTH_URL": storage + "/minio/health/ready",
-        "DOCTA_S3_ACCESS_KEY": values["MINIO_ROOT_USER"],
-        "DOCTA_S3_SECRET_KEY": values["MINIO_ROOT_PASSWORD"],
+        "DOCTA_STORAGE_HEALTH_URL": storage + "/health/ready",
+        "DOCTA_S3_ACCESS_KEY": values["RUSTFS_ACCESS_KEY"],
+        "DOCTA_S3_SECRET_KEY": values["RUSTFS_SECRET_KEY"],
         "DOCTA_REDIS_URL": f"redis://127.0.0.1:{values['REDIS_PORT']}/0",
         "DOCTA_OIDC_ISSUER": issuer,
         "DOCTA_OIDC_JWKS_URL": issuer + "/oauth/v2/keys",
@@ -154,6 +162,16 @@ def normalize_environment(values: dict[str, str]) -> dict[str, str]:
     if values.get("DOCTA_DEV_MANAGED") != "1":
         raise DevError("Existing .devcontainer/.env is not managed; preserve it before setup.")
     values = values.copy()
+    for old, new in (
+        ("MINIO_ROOT_USER", "RUSTFS_ACCESS_KEY"),
+        ("MINIO_ROOT_PASSWORD", "RUSTFS_SECRET_KEY"),
+        ("MINIO_API_PORT", "RUSTFS_API_PORT"),
+        ("MINIO_CONSOLE_PORT", "RUSTFS_CONSOLE_PORT"),
+    ):
+        if old in values and new in values and values[old] != values[new]:
+            raise DevError(f"Conflicting legacy and RustFS configuration for {new}.")
+        if old in values:
+            values.setdefault(new, values[old])
     old_origins = {
         "DOCTA_DEV_WEB_PORT": "DOCTA_WEB_ORIGIN",
         "DOCTA_DEV_API_PORT": "DOCTA_API_BASE_URL",
@@ -176,6 +194,9 @@ def normalize_environment(values: dict[str, str]) -> dict[str, str]:
     }
     for key, value in legacy.items():
         values.setdefault(key, value)
+    values.setdefault(
+        "DOCTA_STORAGE_HEALTH_URL", derived_values(values)["DOCTA_STORAGE_HEALTH_URL"]
+    )
     for key in ("DOCTA_DEV_IAM_DATABASE_DSN", "DOCTA_DEV_WORKER_DATABASE_URL"):
         values.setdefault(key, derived_values(values)[key])
     return values
@@ -192,7 +213,7 @@ def validate_environment(values: dict[str, str]) -> None:
             raise DevError(f"Invalid {key}; use a lowercase PostgreSQL identifier.")
     for key in (
         "POSTGRES_PASSWORD",
-        "MINIO_ROOT_PASSWORD",
+        "RUSTFS_SECRET_KEY",
         "DOCTA_DEV_IAM_DB_PASSWORD",
         "DOCTA_DEV_LOGIN_PASSWORD",
         "DOCTA_WEB_SESSION_SECRET",
@@ -204,8 +225,8 @@ def validate_environment(values: dict[str, str]) -> None:
         raise DevError("DOCTA_WEB_SESSION_SECRET requires at least 32 characters.")
     if len(values["DOCTA_DEV_IAM_MASTERKEY"].encode("utf-8")) != 32:
         raise DevError("DOCTA_DEV_IAM_MASTERKEY requires exactly 32 bytes.")
-    if len(values.get("MINIO_ROOT_USER", "")) < 3 or len(values["MINIO_ROOT_PASSWORD"]) < 8:
-        raise DevError("MinIO requires an access key of 3+ and a secret of 8+ characters.")
+    if len(values.get("RUSTFS_ACCESS_KEY", "")) < 3 or len(values["RUSTFS_SECRET_KEY"]) < 8:
+        raise DevError("RustFS requires an access key of 3+ and a secret of 8+ characters.")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", values.get("DOCTA_S3_BUCKET", "")):
         raise DevError("Use a document bucket of 3-63 lowercase letters, digits or hyphens.")
     for key in (
@@ -239,7 +260,7 @@ def validate_environment(values: dict[str, str]) -> None:
         raise DevError(
             "Invalid application configuration"
             + (" (" + ", ".join(fields) + ")" if fields else "")
-            + "; check tutor endpoint/model/key, provider/schema and timeouts. Values are hidden."
+            + "; check tutor and embedding settings, templates and timeouts. Values are hidden."
         ) from error
 
 
@@ -262,8 +283,8 @@ def new_environment(root: Path) -> dict[str, str]:
         "POSTGRES_DB": "docta_" + suffix,
         "POSTGRES_USER": "docta_" + suffix,
         "POSTGRES_PASSWORD": secrets.token_urlsafe(32),
-        "MINIO_ROOT_USER": "docta-" + suffix,
-        "MINIO_ROOT_PASSWORD": secrets.token_urlsafe(32),
+        "RUSTFS_ACCESS_KEY": "docta-" + suffix,
+        "RUSTFS_SECRET_KEY": secrets.token_urlsafe(32),
         "DOCTA_S3_BUCKET": "docta-documents-" + suffix,
         "DOCTA_WEB_SESSION_SECRET": secrets.token_urlsafe(48),
         "DOCTA_DEV_LOGIN_USERNAME": "developer-" + suffix + "@docta.local",
@@ -306,6 +327,7 @@ def guard_environment_creation(root: Path = ROOT) -> None:
         "docta-dev-iam_bootstrap",
         "docta-dev-iam_postgres-data",
         "docta-dev_postgres-data",
+        "docta-dev_rustfs-data",
         "docta-dev_minio-data",
         "docta-dev_redis-data",
     }
@@ -343,6 +365,7 @@ def guard_identity_recovery() -> None:
         ) from error
     if {
         "docta-dev_postgres-data",
+        "docta-dev_rustfs-data",
         "docta-dev_minio-data",
         "docta-dev_redis-data",
     }.intersection(result.stdout.splitlines()):
@@ -372,6 +395,8 @@ def iam_database_present() -> bool:
 def prompt(label: str, default: str = "", *, choices: tuple[str, ...] = ()) -> str:
     while True:
         value = input(label + (f" [{default}]" if default else "") + ": ").strip() or default
+        if choices == ("yes", "no"):
+            value = {"y": "yes", "n": "no"}.get(value.lower(), value.lower())
         if (
             value
             and not any(ord(char) < 32 for char in value)
@@ -492,6 +517,91 @@ def configure_tutor(values: dict[str, str], *, existing: bool) -> dict[str, str]
     return values
 
 
+def configure_embeddings(values: dict[str, str], *, existing: bool) -> dict[str, str]:
+    print("Embeddings: configure or none" + (", keep existing settings" if existing else "") + ".")
+    choices = ("keep", "configure", "none") if existing else ("configure", "none")
+    selection = prompt("Embedding service", "keep" if existing else "none", choices=choices)
+    if selection == "keep":
+        return values
+    old = values.copy()
+    values = {key: value for key, value in values.items() if key not in EMBED_FIELDS}
+    if selection == "none":
+        return values
+    values["DOCTA_EMBED_ENDPOINT_URL"] = prompt(
+        "Full embeddings endpoint", old.get("DOCTA_EMBED_ENDPOINT_URL", "")
+    )
+    values["DOCTA_EMBED_MODEL"] = prompt("Embedding model ID", old.get("DOCTA_EMBED_MODEL", ""))
+    same_endpoint = values["DOCTA_EMBED_ENDPOINT_URL"] == old.get("DOCTA_EMBED_ENDPOINT_URL")
+    existing_key = old.get("DOCTA_EMBED_API_KEY", "") if same_endpoint else ""
+    values["DOCTA_EMBED_API_KEY"] = prompt_secret(
+        "Embedding API key", existing_key, existing=bool(existing_key)
+    )
+    for key, label, default in (
+        ("DOCTA_EMBED_DIMENSIONS", "Embedding dimensions", ""),
+        ("DOCTA_EMBED_TIMEOUT_SECONDS", "Embedding timeout seconds (1-60)", "30"),
+        ("DOCTA_EMBED_BATCH_SIZE", "Embedding batch size (1-256)", "1"),
+        ("DOCTA_EMBED_INPUT_TYPE", "Embedding input type: off/nvidia", "off"),
+        ("DOCTA_EMBED_QUERY_TEMPLATE", "Query template (include {text} once)", "{text}"),
+        ("DOCTA_EMBED_DOCUMENT_TEMPLATE", "Document template (include {text} once)", "{text}"),
+    ):
+        values[key] = prompt(label, old.get(key, default), choices=("off", "nvidia")
+                             if key == "DOCTA_EMBED_INPUT_TYPE" else ())
+    threshold = prompt(
+        "Provisional dense max distance (0-2), or none", old.get("DOCTA_DENSE_MAX_DISTANCE", "none")
+    )
+    if threshold != "none":
+        values["DOCTA_DENSE_MAX_DISTANCE"] = threshold
+    if same_endpoint and old.get("DOCTA_EMBED_PROVIDER_ROUTING"):
+        values["DOCTA_EMBED_PROVIDER_ROUTING"] = old["DOCTA_EMBED_PROVIDER_ROUTING"]
+    print("Embedding settings entered; choose the retrieval mode next.")
+    return values
+
+
+def configure_retrieval(values: dict[str, str]) -> dict[str, str]:
+    print("Retrieval: fts (text search) or dense (embedding similarity).")
+    mode = prompt("Retrieval mode", values.get("DOCTA_RETRIEVAL_MODE", "fts"),
+                  choices=("fts", "dense"))
+    updated = values.copy()
+    updated["DOCTA_RETRIEVAL_MODE"] = mode
+    if mode != "dense":
+        return updated
+    if not all(updated.get(key) for key in EMBED_FIELDS[:4]):
+        raise DevError(
+            "Dense retrieval requires an embedding endpoint, model, API key and dimensions. "
+            "Configure embeddings first or select fts; nothing was saved."
+        )
+    if not updated.get("DOCTA_DENSE_MAX_DISTANCE"):
+        updated["DOCTA_DENSE_MAX_DISTANCE"] = prompt("Provisional dense max distance (0-2)")
+    try:
+        embed_timeout = int(updated.get("DOCTA_EMBED_TIMEOUT_SECONDS", "10"))
+        tutor_timeout = int(updated.get("DOCTA_TUTOR_TIMEOUT_SECONDS", "45"))
+        message_timeout = int(updated.get("DOCTA_MESSAGE_TIMEOUT_SECONDS", "90"))
+    except ValueError:
+        raise DevError("Timeouts must be integers; nothing was saved.") from None
+    if embed_timeout + tutor_timeout >= message_timeout:
+        maximum = min(179, message_timeout - embed_timeout - 1)
+        if maximum < 1:
+            raise DevError(
+                "Dense retrieval needs embedding plus tutor timeouts below the message deadline. "
+                "Increase the deadline or lower the embedding timeout; nothing was saved."
+            )
+        print(
+            f"Dense retrieval requires embedding timeout ({embed_timeout}s) plus tutor timeout "
+            f"to be less than the message deadline ({message_timeout}s)."
+        )
+        while True:
+            choice = prompt(f"Tutor timeout seconds for dense retrieval (1-{maximum})")
+            if choice.isdecimal() and 1 <= int(choice) <= maximum:
+                updated["DOCTA_TUTOR_TIMEOUT_SECONDS"] = choice
+                break
+            print(f"Enter an integer between 1 and {maximum}.")
+    print(
+        "Dense retrieval needs matching embeddings for every active chunk. Re-upload and publish "
+        "documents indexed without this embedding configuration; no FTS fallback is used."
+    )
+    return updated
+
+
 def show_status(values: dict[str, str]) -> None:
     print(
         f"Private configuration: {profile_path('.env')}; "
@@ -527,9 +637,9 @@ def show_status(values: dict[str, str]) -> None:
         ("OIDC Client ID", "DOCTA_WEB_OIDC_CLIENT_ID"),
     ):
         print(f"{label}: {values.get(key) or 'allocated by dev:setup'}.")
-    print("MinIO access/secret keys: MINIO_ROOT_USER / MINIO_ROOT_PASSWORD (private environment).")
+    print("RustFS access/secret keys: private managed profile (legacy names accepted).")
     print(
-        "Secrets: DOCTA_DEV_LOGIN_PASSWORD, POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, "
+        "Secrets: DOCTA_DEV_LOGIN_PASSWORD, POSTGRES_PASSWORD, storage secret, "
         "DOCTA_DEV_IAM_DB_PASSWORD, DOCTA_DEV_IAM_MASTERKEY, DOCTA_WEB_SESSION_SECRET "
         "(private environment); admin PAT: state/admin.pat."
     )
@@ -538,6 +648,11 @@ def show_status(values: dict[str, str]) -> None:
         f"Tutor: {'configured' if enabled else 'not configured'}; "
         "API key: DOCTA_TUTOR_API_KEY (never displayed)."
     )
+    embed_status = (
+        "configured" if all(values.get(key) for key in EMBED_FIELDS[:4]) else "not configured"
+    )
+    retrieval_mode = values.get("DOCTA_RETRIEVAL_MODE", "fts")
+    print(f"Embeddings: {embed_status}; retrieval mode: {retrieval_mode}.")
 
 
 def show_services() -> None:
@@ -554,7 +669,9 @@ def show_services() -> None:
             print(f"{project}: Docker status unavailable.")
 
 
-def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str]:
+def configure(
+    root: Path = ROOT, *, source: Path | None = None, defaults: bool = False
+) -> dict[str, str]:
     path = profile_path(".env", root)
     if source is not None:
         if path.exists():
@@ -565,6 +682,15 @@ def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str
         print("Original managed credentials restored. Restore matching identity state too.")
         show_status(values)
         return values
+    if defaults:
+        guard_environment_creation(root)
+        if path.exists():
+            raise DevError("A managed environment already exists; defaults cannot replace it.")
+        values = new_environment(root)
+        validate_environment(values)
+        private_write(path, environment_text((root / ".env.example").read_text(), values))
+        print("Generated private development profile; no tutor provider selected.")
+        return values
     if not sys.stdin.isatty():
         raise DevError("Run dev:configure in an interactive terminal with hidden secret input.")
     guard_environment_creation(root)
@@ -572,7 +698,8 @@ def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str
     values = normalize_environment(read_environment(path)) if existing else new_environment(root)
     if existing:
         print(
-            "Reusing infrastructure, users and identity. Only tutor settings can be edited; "
+            "Reusing infrastructure, users and identity. Tutor and embedding settings can be "
+            "edited; "
             "service password rotation requires updating the service itself."
         )
     else:
@@ -599,7 +726,7 @@ def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str
             for key, label in (
                 ("POSTGRES_DB", "Docta database name"),
                 ("POSTGRES_USER", "Docta database role"),
-                ("MINIO_ROOT_USER", "MinIO access key"),
+                ("RUSTFS_ACCESS_KEY", "RustFS access key"),
                 ("DOCTA_S3_BUCKET", "Document bucket"),
                 ("DOCTA_DEV_IAM_DB_USER", "ZITADEL database role"),
                 ("DOCTA_DEV_IAM_DB_NAME", "ZITADEL database name"),
@@ -612,7 +739,7 @@ def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str
                 values[key] = prompt(label, values[key])
             for key, label in (
                 ("POSTGRES_PASSWORD", "Docta database password"),
-                ("MINIO_ROOT_PASSWORD", "MinIO secret key (8+ characters)"),
+                ("RUSTFS_SECRET_KEY", "RustFS secret key (8+ characters)"),
                 ("DOCTA_DEV_IAM_DB_PASSWORD", "ZITADEL database password"),
                 ("DOCTA_DEV_IAM_MASTERKEY", "ZITADEL master key (exactly 32 bytes)"),
                 ("DOCTA_WEB_SESSION_SECRET", "Web session secret (32+ characters)"),
@@ -623,6 +750,8 @@ def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str
                 values[key] = prompt(key, default)
         values |= derived_values(values)
     values = configure_tutor(values, existing=existing)
+    values = configure_embeddings(values, existing=existing)
+    values = configure_retrieval(values)
     validate_environment(values)
     if existing:
         original = path.read_text(encoding="utf-8")
@@ -635,7 +764,9 @@ def configure(root: Path = ROOT, *, source: Path | None = None) -> dict[str, str
     private_write(
         path,
         environment_text(
-            original, values, remove=tuple(key for key in TUTOR_FIELDS if key not in values)
+            original, values, remove=tuple(
+                key for key in (*TUTOR_FIELDS, *EMBED_FIELDS) if key not in values
+            )
         ),
     )
     next_command = "npm run dev:all" if existing else "npm run dev:setup"
@@ -666,7 +797,7 @@ def run(
 def process_environment(values: dict[str, str], *, clean: bool = True) -> dict[str, str]:
     environment = {
         key: value for key, value in os.environ.items()
-        if not clean or not key.startswith(("DOCTA_", "POSTGRES_", "MINIO_", "ZITADEL_"))
+        if not clean or not key.startswith(("DOCTA_", "POSTGRES_", "MINIO_", "RUSTFS_", "ZITADEL_"))
     }
     return environment | values
 
@@ -688,7 +819,7 @@ def runtime_values(values: dict[str, str], component: str = "api") -> dict[str, 
             "DOCTA_OIDC_ISSUER", "DOCTA_OIDC_AUDIENCE",
         }
     elif component == "migration":
-        allowed = {"DOCTA_DATABASE_URL", "DOCTA_MINIO_HEALTH_URL"}
+        allowed = {"DOCTA_DATABASE_URL", "DOCTA_STORAGE_HEALTH_URL"}
     elif component == "helper":
         allowed = {"DOCTA_API_BASE_URL", "DOCTA_OIDC_ISSUER", "DOCTA_OIDC_AUDIENCE",
                    "DOCTA_OIDC_JWKS_URL"}
@@ -956,6 +1087,20 @@ def start_iam(values: dict[str, str]) -> None:
         run([*compose("iam"), "up", "-d", "--wait", "--wait-timeout", "600"], values, quiet=True)
     except DevError as error:
         message = "ZITADEL startup failed; check the docta-dev-iam service status."
+        cause = error.__cause__
+        stderr = cause.stderr if isinstance(cause, subprocess.CalledProcessError) else ""
+        stderr = stderr.lower() if isinstance(stderr, str) else ""
+        if any(marker in stderr for marker in (
+            "ports are not available", "port is already allocated", "address already in use",
+            "only one usage of each socket address",
+        )):
+            port = values.get("DOCTA_DEV_IAM_PORT", "18080")
+            port = port if port.isdigit() else "configured"
+            raise DevError(
+                f"ZITADEL startup failed: port {port} is already in use. "
+                "In VS Code's Ports panel, stop forwarding that port if it is auto-forwarded; "
+                "otherwise stop the conflicting listener, then rerun npm run dev:setup."
+            ) from error
         # Classify known failures without exposing raw logs, DSNs or generated credentials.
         try:
             result = subprocess.run(
@@ -1011,7 +1156,7 @@ def bootstrap(values: dict[str, str], *, recover_identity: bool = False) -> dict
         ).provision(values, recover_identity=recover_identity)
     update_env(profile_path(".env"), updates)
     values |= updates
-    print("Starting isolated PostgreSQL, Redis and MinIO; applying migrations...", flush=True)
+    print("Starting isolated PostgreSQL, Redis and RustFS; applying migrations...", flush=True)
     run([*compose("infra"), "up", "-d", "--build", "--wait"], values, quiet=True)
     run([sys.executable, "-m", "alembic", "-c", "apps/api/alembic.ini", "upgrade", "head"],
         runtime_values(values, "migration"), quiet=True)
@@ -1127,7 +1272,7 @@ def start_existing(values: dict[str, str]) -> None:
     registered_identity(values)
     for stack, project, required in (
         ("iam", "docta-dev-iam", {"proxy", "postgres", "zitadel-api", "zitadel-login"}),
-        ("infra", "docta-dev", {"postgres", "redis", "minio"}),
+        ("infra", "docta-dev", {"postgres", "redis", "rustfs"}),
     ):
         states = service_states(project)
         if not required.issubset(states):
@@ -1233,8 +1378,8 @@ def check(values: dict[str, str], *, full: bool) -> None:
         "DOCTA_DEV_MANAGED": "1",  # Test children must also ignore the developer's root .env.
         "DOCTA_DATABASE_URL": "postgresql://docta_test:docta_test_only@127.0.0.1:"
         f"{test_values.get('DOCTA_TEST_POSTGRES_PORT', '55432')}/postgres",
-        "DOCTA_MINIO_HEALTH_URL": "http://127.0.0.1:"
-        f"{test_values.get('DOCTA_TEST_MINIO_PORT', '59000')}/minio/health/ready",
+        "DOCTA_STORAGE_HEALTH_URL": "http://127.0.0.1:"
+        f"{test_values.get('DOCTA_TEST_STORAGE_PORT', '59000')}/health/ready",
     }
     commands = [
         [sys.executable, "-m", "pytest", "tests/unit", "-p", "no:cacheprovider"],
@@ -1252,7 +1397,22 @@ def check(values: dict[str, str], *, full: bool) -> None:
             values | test_overrides,
             quiet=True,
         )
-        run(["docker", "build", "-f", "infra/worker.Dockerfile", "-t", "docta-worker:latest", "."],
+        # Restrict the context to the worker's inputs. In particular, Docker must not walk
+        # unrelated or inaccessible caches from a Windows-mounted checkout.
+        with TemporaryDirectory(prefix="docta-worker-build-") as directory:
+            context = Path(directory)
+            for name in ("pyproject.toml", "uv.lock"):
+                shutil.copy2(ROOT / name, context / name)
+            shutil.copytree(
+                ROOT / "apps/api/src", context / "apps/api/src",
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+            run(
+                ["docker", "build", "-f", str(ROOT / "infra/worker.Dockerfile"),
+                 "-t", "docta-worker:latest", str(context)],
+                test_values, inherit_identity=False,
+            )
+        run(["docker", "build", "-f", "infra/caddy.Dockerfile", "-t", "docta-proxy:vm", "infra"],
             test_values, inherit_identity=False)
         run(
             [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"],
@@ -1265,8 +1425,12 @@ def check(values: dict[str, str], *, full: bool) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
-    for action in ("bootstrap", "start", "stop", "post-start", "status", "recover-identity"):
+    for action in ("start", "stop", "post-start", "status", "recover-identity"):
         actions.add_parser(action)
+    bootstrap_action = actions.add_parser("bootstrap")
+    bootstrap_action.add_argument(
+        "--defaults", action="store_true", help="Generate a private profile without prompts"
+    )
     settings = actions.add_parser("configure", aliases=["init"])
     settings.add_argument("--from-env", type=Path, help="Restore an original managed environment")
     checks = actions.add_parser("check")
@@ -1317,7 +1481,7 @@ def main() -> int:
             guard_environment_creation()
             freshly_configured = args.action == "bootstrap" and not profile_path(".env").is_file()
             if freshly_configured:
-                configure()
+                configure(defaults=args.defaults)
             elif args.action == "bootstrap":
                 print(
                     "Existing managed credentials loaded. If ZITADEL already has a database, "

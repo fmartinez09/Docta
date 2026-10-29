@@ -1,0 +1,12 @@
+**
+!pyproject.toml
+!uv.lock
+!apps/
+!apps/api/
+!apps/api/src/
+!apps/api/src/**
+!apps/api/migrations/
+!apps/api/migrations/**
+!apps/api/alembic.ini
+**/__pycache__/
+**/*.pyc

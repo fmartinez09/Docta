@@ -1,0 +1,162 @@
+name: docta-vm
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: postgres.Dockerfile
+    image: docta-postgres:16.10-pgvector0.8.7
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7.4.9-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  rustfs:
+    image: rustfs/rustfs:1.0.4@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY}
+      RUSTFS_CORS_ALLOWED_ORIGINS: https://${DOCTA_WEB_DOMAIN:?Set DOCTA_WEB_DOMAIN}
+    volumes: ["rustfs-data:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health/ready"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    build: &api-build
+      context: ..
+      dockerfile: infra/api.Dockerfile
+    image: docta-api:vm
+    command: ["/app/.venv/bin/alembic", "-c", "apps/api/alembic.ini", "upgrade", "head"]
+    environment:
+      DOCTA_DATABASE_URL: ${DOCTA_VM_DATABASE_URL:?Set DOCTA_VM_DATABASE_URL}
+      DOCTA_STORAGE_HEALTH_URL: http://rustfs:9000/health/ready
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    build: *api-build
+    image: docta-api:vm
+    restart: unless-stopped
+    env_file:
+      - path: ../.env.vm.api
+        required: false
+    environment:
+      DOCTA_ENVIRONMENT: production
+      DOCTA_DATABASE_URL: ${DOCTA_VM_DATABASE_URL:?Set DOCTA_VM_DATABASE_URL}
+      DOCTA_STORAGE_HEALTH_URL: http://rustfs:9000/health/ready
+      DOCTA_OIDC_ISSUER: ${DOCTA_OIDC_ISSUER:?Set DOCTA_OIDC_ISSUER}
+      DOCTA_OIDC_JWKS_URL: ${DOCTA_OIDC_JWKS_URL:?Set DOCTA_OIDC_JWKS_URL}
+      DOCTA_OIDC_AUDIENCE: ${DOCTA_OIDC_AUDIENCE:?Set DOCTA_OIDC_AUDIENCE}
+      DOCTA_S3_ENDPOINT_URL: http://rustfs:9000
+      DOCTA_S3_PUBLIC_ENDPOINT_URL: https://${DOCTA_STORAGE_DOMAIN:?Set DOCTA_STORAGE_DOMAIN}
+      DOCTA_S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY}
+      DOCTA_S3_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY}
+      DOCTA_S3_BUCKET: ${DOCTA_S3_BUCKET:?Set DOCTA_S3_BUCKET}
+      DOCTA_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      rustfs: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/worker.Dockerfile
+    image: docta-worker:vm
+    restart: unless-stopped
+    env_file:
+      - path: ../.env.vm.worker
+        required: false
+    environment:
+      DOCTA_DEV_MANAGED: "1"
+      DOCTA_ENVIRONMENT: production
+      DOCTA_DATABASE_URL: ${DOCTA_VM_DATABASE_URL:?Set DOCTA_VM_DATABASE_URL}
+      DOCTA_STORAGE_HEALTH_URL: http://rustfs:9000/health/ready
+      DOCTA_OIDC_ISSUER: ${DOCTA_OIDC_ISSUER:?Set DOCTA_OIDC_ISSUER}
+      DOCTA_OIDC_JWKS_URL: ${DOCTA_OIDC_JWKS_URL:?Set DOCTA_OIDC_JWKS_URL}
+      DOCTA_OIDC_AUDIENCE: ${DOCTA_OIDC_AUDIENCE:?Set DOCTA_OIDC_AUDIENCE}
+      DOCTA_S3_ENDPOINT_URL: http://rustfs:9000
+      DOCTA_S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY}
+      DOCTA_S3_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY}
+      DOCTA_S3_BUCKET: ${DOCTA_S3_BUCKET:?Set DOCTA_S3_BUCKET}
+      DOCTA_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      rustfs: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+    image: docta-web:vm
+    restart: unless-stopped
+    env_file:
+      - path: ../.env.vm.web
+        required: false
+    environment:
+      DOCTA_DEV_MANAGED: "1"
+      DOCTA_API_BASE_URL: http://api:8000
+      DOCTA_WEB_ORIGIN: https://${DOCTA_WEB_DOMAIN:?Set DOCTA_WEB_DOMAIN}
+      DOCTA_OIDC_ISSUER: ${DOCTA_OIDC_ISSUER:?Set DOCTA_OIDC_ISSUER}
+      DOCTA_OIDC_AUDIENCE: ${DOCTA_OIDC_AUDIENCE:?Set DOCTA_OIDC_AUDIENCE}
+      DOCTA_WEB_OIDC_CLIENT_ID: ${DOCTA_WEB_OIDC_CLIENT_ID:?Set DOCTA_WEB_OIDC_CLIENT_ID}
+      DOCTA_WEB_SESSION_SECRET: ${DOCTA_WEB_SESSION_SECRET:?Set DOCTA_WEB_SESSION_SECRET}
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  proxy:
+    build:
+      context: .
+      dockerfile: caddy.Dockerfile
+    image: docta-proxy:vm
+    restart: unless-stopped
+    environment:
+      DOCTA_WEB_DOMAIN: ${DOCTA_WEB_DOMAIN:?Set DOCTA_WEB_DOMAIN}
+      DOCTA_STORAGE_DOMAIN: ${DOCTA_STORAGE_DOMAIN:?Set DOCTA_STORAGE_DOMAIN}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web: {condition: service_healthy}
+      rustfs: {condition: service_healthy}
+
+volumes:
+  postgres-data:
+  redis-data:
+  rustfs-data:
+  caddy-data:
+  caddy-config:

@@ -1,4 +1,8 @@
 .env
+.env.vm
+.env.vm.api
+.env.vm.worker
+.env.vm.web
 .venv/
 .uv-cache/
 .npm-cache/

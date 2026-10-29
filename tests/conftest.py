@@ -21,7 +21,7 @@ def integration_resources():
     """Only the dedicated Compose test services; never derive destructive targets from .env."""
     postgres_port = int(os.environ.get("DOCTA_TEST_POSTGRES_PORT", "55432"))
     assert 1024 <= postgres_port <= 65535
-    storage_port = int(os.environ.get("DOCTA_TEST_MINIO_PORT", "59000"))
+    storage_port = int(os.environ.get("DOCTA_TEST_STORAGE_PORT", "59000"))
     assert 1024 <= storage_port <= 65535
     storage_endpoint = f"http://127.0.0.1:{storage_port}"
     suffix = uuid4().hex
@@ -34,7 +34,7 @@ def integration_resources():
     values = {
         "DOCTA_ENVIRONMENT": "test",
         "DOCTA_DATABASE_URL": admin_url.removesuffix("postgres") + database,
-        "DOCTA_MINIO_HEALTH_URL": f"{storage_endpoint}/minio/health/ready",
+        "DOCTA_STORAGE_HEALTH_URL": f"{storage_endpoint}/health/ready",
         "DOCTA_S3_ENDPOINT_URL": storage_endpoint,
         "DOCTA_S3_ACCESS_KEY": "docta-test",
         "DOCTA_S3_SECRET_KEY": "docta-test-secret",
