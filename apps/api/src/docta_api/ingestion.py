@@ -3,8 +3,9 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from math import isfinite
 from random import uniform
-from time import perf_counter
+from time import monotonic, perf_counter
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, update
@@ -16,9 +17,11 @@ from docta_api.document_parser import (
     DocumentProcessingFailure,
     build_chunks,
 )
+from docta_api.embedding import Embedder, EmbeddingInvalid, EmbeddingUnavailable
 from docta_api.jobs import JobEnvelope, envelope_for, record_dead_letter, schedule_retry
 from docta_api.models import (
     Chunk,
+    ChunkEmbedding,
     CorpusVersion,
     CorpusVersionDocument,
     CorpusVersionState,
@@ -36,6 +39,9 @@ from docta_api.object_storage import (
 )
 
 logger = logging.getLogger("docta.ingestion")
+
+_EMBED_BATCH_SIZE = 32
+_EMBED_DEADLINE_FRACTION = 0.8
 
 
 class InvalidJobEnvelope(Exception):
@@ -68,7 +74,9 @@ class IngestionWorker:
         lease_seconds: int = 300,
         max_attempts: int = 3,
         retry_base_seconds: float = 2,
+        embedder: Embedder | None = None,
     ) -> None:
+        self._embedder = embedder
         self._database = database
         self._object_storage = object_storage
         self._parser = parser
@@ -110,6 +118,7 @@ class IngestionWorker:
                 size_characters=self._chunk_size_characters,
                 overlap_characters=self._chunk_overlap_characters,
             )
+            embeddings = self._embed(chunks)
             self._persist_success(
                 claimed,
                 actual_sha256,
@@ -117,6 +126,8 @@ class IngestionWorker:
                 parsed.pages,
                 chunks,
                 parsed.parser_version,
+                embeddings,
+                self._embedder.version if embeddings is not None and self._embedder else None,
             )
         except DocumentProcessingFailure as error:
             self._persist_failure(claimed, error.code, error.state)
@@ -137,6 +148,11 @@ class IngestionWorker:
             self._persist_failure(claimed, code, DocumentVersionState.FAILED, transient=True)
             self._log(job_id, correlation_id, "storage_unavailable", started_at, code)
             return self._acknowledgeable(job_id)
+        except EmbeddingUnavailable:
+            code = "EMBEDDING_UNAVAILABLE"
+            self._persist_failure(claimed, code, DocumentVersionState.FAILED, transient=True)
+            self._log(job_id, correlation_id, "embedder_unavailable", started_at, code)
+            return self._acknowledgeable(job_id)
         except SQLAlchemyError:
             # A database outage cannot be acknowledged. Lease recovery resumes the job.
             raise
@@ -148,6 +164,36 @@ class IngestionWorker:
 
         self._log(job_id, correlation_id, "completed", started_at)
         return self._acknowledgeable(job_id)
+
+    def _embed(self, chunks: tuple) -> list[list[float]] | None:
+        """Embed chunk contents outside any transaction; never log texts or vectors."""
+        if self._embedder is None:
+            return None
+        try:
+            expected_dims = int(self._embedder.version.rsplit("|", 2)[1])
+        except (IndexError, ValueError):
+            raise DocumentProcessingFailure(
+                "EMBEDDING_INVALID", DocumentVersionState.FAILED
+            ) from None
+        deadline = monotonic() + self._lease_seconds * _EMBED_DEADLINE_FRACTION
+        vectors: list[list[float]] = []
+        for start in range(0, len(chunks), _EMBED_BATCH_SIZE):
+            if monotonic() >= deadline:
+                raise EmbeddingUnavailable
+            batch = [chunk.content for chunk in chunks[start : start + _EMBED_BATCH_SIZE]]
+            try:
+                result = self._embedder.embed_documents(batch)
+            except EmbeddingInvalid:
+                raise DocumentProcessingFailure(
+                    "EMBEDDING_INVALID", DocumentVersionState.FAILED
+                ) from None
+            if len(result) != len(batch) or any(
+                len(vector) != expected_dims or not all(isfinite(value) for value in vector)
+                for vector in result
+            ):
+                raise DocumentProcessingFailure("EMBEDDING_INVALID", DocumentVersionState.FAILED)
+            vectors.extend([list(vector) for vector in result])
+        return vectors
 
     def _acknowledgeable(self, job_id: UUID) -> bool:
         with self._database.session() as session:
@@ -243,6 +289,8 @@ class IngestionWorker:
         pages: tuple,
         parsed_chunks: tuple,
         parser_version: str,
+        embeddings: list[list[float]] | None = None,
+        embedding_version: str | None = None,
     ) -> None:
         with self._database.session() as session:
             active_job = session.scalar(
@@ -276,10 +324,11 @@ class IngestionWorker:
                 )
             )
             session.flush()
-            for parsed_chunk in parsed_chunks:
+            chunk_ids = [uuid4() for _ in parsed_chunks]
+            for chunk_id, parsed_chunk in zip(chunk_ids, parsed_chunks, strict=True):
                 session.add(
                     Chunk(
-                        id=uuid4(),
+                        id=chunk_id,
                         course_id=job.course_id,
                         corpus_version_id=corpus.id,
                         document_version_id=job.document_version_id,
@@ -299,6 +348,30 @@ class IngestionWorker:
             )
             if indexed_count != len(parsed_chunks):
                 raise RuntimeError("corpus build verification failed")
+
+            if embeddings is not None and embedding_version is not None:
+                if len(embeddings) != len(chunk_ids):
+                    raise RuntimeError("embedding count mismatch")
+                for chunk_id, vector in zip(chunk_ids, embeddings, strict=True):
+                    session.add(
+                        ChunkEmbedding(
+                            chunk_id=chunk_id,
+                            embedding_version=embedding_version,
+                            course_id=job.course_id,
+                            corpus_version_id=corpus.id,
+                            dims=len(vector),
+                            embedding=vector,
+                        )
+                    )
+                session.flush()
+                embedded_count = session.scalar(
+                    select(func.count(ChunkEmbedding.chunk_id)).where(
+                        ChunkEmbedding.corpus_version_id == corpus.id,
+                        ChunkEmbedding.embedding_version == embedding_version,
+                    )
+                )
+                if embedded_count != len(parsed_chunks):
+                    raise RuntimeError("corpus embedding verification failed")
 
             corpus.state = CorpusVersionState.READY.value
             corpus.ready_at = datetime.now(UTC)

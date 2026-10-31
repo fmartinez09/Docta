@@ -31,7 +31,6 @@ from docta_api.models import (
 )
 from docta_api.rag import (
     PROMPT_VERSION,
-    RETRIEVAL_VERSION,
     Evidence,
     HistoryTurn,
     RAGFailure,
@@ -160,10 +159,16 @@ def _owned(
 
 class ConversationService:
     def __init__(
-        self, database: Database, *, model_version: str, message_timeout_seconds: int = 90
+        self,
+        database: Database,
+        *,
+        model_version: str,
+        retrieval_version: str,
+        message_timeout_seconds: int = 90,
     ) -> None:
         self.database = database
         self.model_version = model_version
+        self.retrieval_version = retrieval_version
         self.message_timeout_seconds = message_timeout_seconds
 
     def create(
@@ -254,7 +259,7 @@ class ConversationService:
                 state=MessageState.PENDING,
                 correlation_id=correlation_id,
                 prompt_version=PROMPT_VERSION,
-                retrieval_config_version=RETRIEVAL_VERSION,
+                retrieval_config_version=self.retrieval_version,
                 model_version=self.model_version,
                 deadline_at=now + timedelta(seconds=self.message_timeout_seconds),
             )

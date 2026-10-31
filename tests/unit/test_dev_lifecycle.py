@@ -32,6 +32,49 @@ def test_runtime_processes_do_not_receive_iam_administrator_secrets():
     assert "DOCTA_TUTOR_API_KEY" not in dev.runtime_values(values, "web")
 
 
+def test_embedding_key_reaches_api_and_worker_but_is_never_printed(capsys):
+    values = {
+        "DOCTA_DATABASE_URL": "postgresql://app",
+        "DOCTA_RETRIEVAL_MODE": "dense",
+        "DOCTA_DENSE_MAX_DISTANCE": "0.4",
+        "DOCTA_EMBED_ENDPOINT_URL": "https://embed.test/v1/embeddings",
+        "DOCTA_EMBED_MODEL": "vendor/model",
+        "DOCTA_EMBED_API_KEY": "private-embed-key",
+        "DOCTA_EMBED_DIMENSIONS": "8",
+    }
+
+    for component in ("api", "worker"):
+        runtime = dev.runtime_values(values, component)
+        assert runtime["DOCTA_EMBED_API_KEY"] == "private-embed-key"
+        assert runtime["DOCTA_EMBED_MODEL"] == "vendor/model"
+    api = dev.runtime_values(values, "api")
+    assert api["DOCTA_RETRIEVAL_MODE"] == "dense"
+    assert api["DOCTA_DENSE_MAX_DISTANCE"] == "0.4"
+    worker = dev.runtime_values(values, "worker")
+    assert "DOCTA_RETRIEVAL_MODE" not in worker
+    assert "DOCTA_DENSE_MAX_DISTANCE" not in worker
+    for component in ("web", "migration", "helper"):
+        assert "DOCTA_EMBED_API_KEY" not in dev.runtime_values(values, component)
+    assert "private-embed-key" not in capsys.readouterr().out
+
+
+def test_worker_override_passes_embedder_variables_without_defaults():
+    from pathlib import Path
+
+    text = (Path(dev.ROOT) / ".devcontainer/infra.override.yaml").read_text()
+    assert "DOCTA_RETRIEVAL_MODE" not in text
+    for name in (
+        "DOCTA_EMBED_ENDPOINT_URL",
+        "DOCTA_EMBED_MODEL",
+        "DOCTA_EMBED_API_KEY",
+        "DOCTA_EMBED_DIMENSIONS",
+        "DOCTA_EMBED_INPUT_TYPE",
+        "DOCTA_EMBED_PROVIDER_ROUTING",
+    ):
+        assert f"      {name}:\n" in text
+        assert f"${{{name}" not in text
+
+
 def test_process_environment_removes_host_service_credentials(monkeypatch):
     monkeypatch.setenv("DOCTA_DEV_LOGIN_PASSWORD", "host-iam-password")
     monkeypatch.setenv("POSTGRES_PASSWORD", "host-database-password")
