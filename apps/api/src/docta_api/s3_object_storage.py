@@ -45,13 +45,17 @@ class S3ObjectStorage:
             region_name=region,
             config=client_config,
         )
-        self._presign_client: Any = self._client if public_endpoint_url is None else boto3.client(
-            "s3",
-            endpoint_url=public_endpoint_url,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region_name=region,
-            config=client_config,
+        self._presign_client: Any = (
+            self._client
+            if public_endpoint_url is None
+            else boto3.client(
+                "s3",
+                endpoint_url=public_endpoint_url,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                region_name=region,
+                config=client_config,
+            )
         )
 
     def create_upload_authorization(

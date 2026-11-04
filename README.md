@@ -5,8 +5,12 @@ application/BFF, a FastAPI API, PostgreSQL, RustFS, and a separate ingestion wor
 Redis Streams. ZITADEL provides local identity and OIDC tokens; Docta remains responsible for
 course authorization, memberships, and private conversations.
 
-Phase 0 (the PDF-to-chat path) is implemented. Tutor quality has not been established yet. The
-next planned slice is an offline evaluation harness and reviewed dataset. See
+Docta features a Socratic tutor prototype for Spanish humanities (History, Geography, and Social
+Sciences) with an `@assistant-ui/react` conversation interface and `@openuidev/react-lang` Renderer
+presenting custom educational components (`GuidedQuestion`, `Hint`, `Explanation`, `Diagram`, `Sources`).
+Factual responses require verified course evidence, committing validated interventions and citations
+atomically with no unvalidated token streaming or general-knowledge fallback. An offline evaluation
+harness and reviewed dataset remain the next planned evaluation slice. See
 [the architecture and decision record](docs/ARCHITECTURE.md) for implemented contracts and
 [the engineering rules](AGENTS.md) for repository constraints.
 
@@ -306,9 +310,41 @@ With `npm run dev:all` running, the default addresses are:
 | RustFS API / console | <http://127.0.0.1:19000> / <http://127.0.0.1:19001> |
 
 Sign in, create a course, upload a digital text PDF, wait for indexing, and publish the indexed
-corpus. Ask a question supported by the material and inspect the citations. Try an unsupported
-question separately to observe abstention. Only digital text PDFs are supported; invalid,
-encrypted, and image-only PDFs are rejected explicitly.
+corpus. Ask a question or submit an activity attempt supported by the material.
+
+The Socratic tutor observes the student's attempt across nine pedagogical situations (History,
+Geography, and Social Sciences):
+- Ambiguous task or attempt: asks a concrete clarification question immediately, without model or retrieval.
+- Clear activity without attempt: provides an accessible entry point; a direct conceptual question
+  can receive a brief explanation before a question or optional activity.
+- Unsupported claim: asks for supporting evidence and connection to the conclusion.
+- Partial progress: acknowledges progress and focuses on the missing element.
+- Contrastable error: provides a targeted hint or question to review the sources.
+- Missing concept: briefly explains the concept and returns to the activity.
+- Blocked or asks for help: increases the level of guidance without repeating hints.
+- Grounded answer: proposes a contrast or application and closes the turn.
+- Insufficient evidence: abstains explicitly with canonical message, citing nothing.
+
+Only one primary question is asked per turn. The student can type contextual follow-ups
+(\"no sé\", \"otra pista\", \"explícame eso\") or click action buttons (\"Otra pista\", \"Explicar\",
+\"Ver fuente\"). These actions create authorized turns resolved from bounded history without
+duplicate model calls.
+
+Responses are presented using `@assistant-ui/react` and `@openuidev/react-lang` Renderer with
+custom components (`GuidedQuestion`, `Hint`, `Explanation`, `Diagram`, `Activity`, `Sources`). Only validated,
+complete responses are shown (no unvalidated token streaming). If OpenUI rendering encounters
+an error, the interface cleanly falls back to the deterministic equivalent text and citations.
+A toolbar toggle allows switching between rich OpenUI presentation and text-only mode on the fly
+without losing conversation state.
+Sources are available in a disclosure for each answer; the source action opens that answer's
+citations. Validated citations remain available when the model omits a sources block. New validated
+answers appear in short stages, respecting reduced-motion preferences; this is not model streaming.
+When the retrieved material supports it, the tutor may include a single-choice activity. The student
+can choose an option, check it and reveal a hint locally; selection and feedback reset on reload.
+The correct option is included in the validated response sent to the browser, so this is practice,
+not an assessment. Citation and schema validation do not establish semantic support or correctness.
+
+Only digital text PDFs are supported; invalid, encrypted, and image-only PDFs are rejected explicitly.
 
 For direct API exercises, keep tokens private and use the managed environment wrapper:
 
@@ -320,9 +356,12 @@ uv run --frozen python -m scripts.dev run -- uv run python scripts/upload_dev_pd
 The token helper uses Authorization Code + PKCE and validates the configured issuer, audience,
 signature, and expiry. The upload helper authenticates, uploads, polls indexing, and activates
 only after the corpus is ready. A question POST requires an `Idempotency-Key`; the exact question
-is persisted before retrieval or model calls. A same-key retry observes the same execution, while
-changed text conflicts. Do not infer a completed answer from a disconnected SSE stream; inspect
-the durable message status or conversation history.
+is persisted before retrieval or model calls. Action turns can be submitted via
+`POST /api/v1/courses/{course_id}/conversations/{conversation_id}/actions` with `action`
+(`another_hint`, `explain`, `view_source`), `parent_message_id`, and `Idempotency-Key`.
+A same-key retry observes the same execution, while changed text or action conflicts.
+Do not infer a completed answer from a disconnected SSE stream; inspect the durable message
+status or conversation history.
 
 ## Tutor configuration
 

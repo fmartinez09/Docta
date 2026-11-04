@@ -20,7 +20,7 @@ import {
   MessageSquarePlus,
   Sparkles,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   api,
   DoctaError,
@@ -31,20 +31,37 @@ import {
   type Message,
 } from "@/lib/docta";
 import { readEvents } from "@/lib/sse";
+import type { Action } from "@/lib/tutor-contract";
+import { RichResponse } from "./rich-response";
 
 const phases: Record<string, string> = {
   "message.accepted": "Pregunta guardada",
+  "clarification.started": "Aclarando la actividad",
   "retrieval.started": "Consultando el material",
   "retrieval.completed": "Material encontrado",
   "generation.started": "Preparando una orientación",
   "validation.started": "Verificando respuesta y citas",
 };
 
+type TutorPanelContextValue = {
+  onAction: (action: Action, parentMessageId: string) => void;
+  richEnabled: boolean;
+  disabled: boolean;
+};
+
+const TutorPanelContext = createContext<TutorPanelContextValue>({
+  onAction: () => {},
+  richEnabled: true,
+  disabled: false,
+});
+
 type TutorMessageMetadata = {
+  messageId?: string;
   state?: Message["state"];
   response?: Message["response"];
   failureCode?: string | null;
   phase?: string;
+  animate?: boolean;
 };
 
 function useTutorMessageMetadata(): TutorMessageMetadata {
@@ -67,6 +84,7 @@ function TutorMessage() {
   const metadata = useTutorMessageMetadata();
   const status = useAuiState((state) => state.message.status);
   const pending = metadata.state === "pending" || status?.type === "running";
+  const { onAction, richEnabled, disabled } = useContext(TutorPanelContext);
 
   if (pending) {
     return (
@@ -109,41 +127,57 @@ function TutorMessage() {
           {response?.mode === "abstain" && (
             <span className="abstention-label">Evidencia insuficiente</span>
           )}
+          {response?.mode === "clarify" && (
+            <span className="abstention-label">Aclaración</span>
+          )}
         </div>
-        <div className="answer-text">
-          <MessagePrimitive.Parts />
-        </div>
-        {!!response?.citations.length && (
-          <details className="citation">
-            <summary>
-              <span>
-                <BookOpen size={15} />
-                {response.citations.length}{" "}
-                {response.citations.length === 1 ? "fuente" : "fuentes"}
-              </span>
-              <ChevronDown size={15} className="citation-chevron" />
-            </summary>
-            <div className="citation-list">
-              {response.citations.map((citation) => (
-                <div className="citation-item" key={citation.chunk_id}>
-                  <div className="citation-heading">
-                    <strong>{citation.document_title}</strong>
-                    <span>
-                      Pág. {citation.page}
-                      {citation.page_end !== citation.page
-                        ? `–${citation.page_end}`
-                        : ""}
-                    </span>
-                  </div>
-                  <blockquote>{citation.quote}</blockquote>
-                  <small>
-                    Fragmento {citation.fragment} · Versión{" "}
-                    {citation.document_version_id}
-                  </small>
-                </div>
-              ))}
+        {response?.intervention ? (
+          <RichResponse
+            intervention={response.intervention}
+            citations={response.citations}
+            onAction={(action) => onAction(action, metadata.messageId ?? "")}
+            richEnabled={richEnabled}
+            disabled={disabled}
+            animate={metadata.animate}
+          />
+        ) : (
+          <>
+            <div className="answer-text">
+              <MessagePrimitive.Parts />
             </div>
-          </details>
+            {!!response?.citations.length && (
+              <details className="citation">
+                <summary>
+                  <span>
+                    <BookOpen size={15} />
+                    {response.citations.length}{" "}
+                    {response.citations.length === 1 ? "fuente" : "fuentes"}
+                  </span>
+                  <ChevronDown size={15} className="citation-chevron" />
+                </summary>
+                <div className="citation-list">
+                  {response.citations.map((citation) => (
+                    <div className="citation-item" key={citation.chunk_id}>
+                      <div className="citation-heading">
+                        <strong>{citation.document_title}</strong>
+                        <span>
+                          Pág. {citation.page}
+                          {citation.page_end !== citation.page
+                            ? `–${citation.page_end}`
+                            : ""}
+                        </span>
+                      </div>
+                      <blockquote>{citation.quote}</blockquote>
+                      <small>
+                        Fragmento {citation.fragment} · Versión{" "}
+                        {citation.document_version_id}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </>
         )}
       </div>
     </MessagePrimitive.Root>
@@ -164,6 +198,8 @@ export function TutorPanel({
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState("");
   const [error, setError] = useState("");
+  const [recentMessageId, setRecentMessageId] = useState<string | null>(null);
+  const [richEnabled, setRichEnabled] = useState(true);
   const [retry, setRetry] = useState<{ question: string; key: string } | null>(
     null,
   );
@@ -237,6 +273,7 @@ export function TutorPanel({
     setLoading(true);
     setError("");
     setRetry(null);
+    setRecentMessageId(null);
     acceptedId.current = null;
     try {
       await refresh(id);
@@ -253,7 +290,7 @@ export function TutorPanel({
     }
   }
 
-  async function createConversation() {
+  const createConversation = useCallback(async () => {
     historyRequest.current++;
     const conversation = await api<Conversation>(
       `courses/${course.id}/conversations`,
@@ -263,6 +300,7 @@ export function TutorPanel({
     if (mounted.current) {
       setSelected(conversation.id);
       setMessages([]);
+      setRecentMessageId(null);
       setConversations((rows) => [
         conversation,
         ...rows.filter((row) => row.id !== conversation.id),
@@ -274,7 +312,7 @@ export function TutorPanel({
       `/?course=${course.id}&conversation=${conversation.id}`,
     );
     return conversation.id;
-  }
+  }, [course.id]);
 
   async function newConversation() {
     setLoading(true);
@@ -288,62 +326,96 @@ export function TutorPanel({
     }
   }
 
-  async function send(question: string, key: string) {
-    acceptedId.current = null;
-    setBusy(true);
-    setError("");
-    setPhase("Enviando tu pregunta…");
-    let id = selected;
-    let terminal = false;
-    try {
-      if (!id) id = await createConversation();
-      stream.current = new AbortController();
-      const response = await fetch(`/api/docta/conversations/${id}/messages`, {
-        method: "POST",
-        credentials: "same-origin",
-        signal: stream.current.signal,
-        headers: { "Content-Type": "application/json", "Idempotency-Key": key },
-        body: JSON.stringify({ question }),
-      });
-      if (!response.ok) {
-        const error = await response.json();
-        throw new DoctaError(error.code);
-      }
-      if (
-        !response.body ||
-        !response.headers.get("content-type")?.includes("text/event-stream")
-      )
-        throw new Error("Invalid response");
-      await readEvents(response.body, (event) => {
-        if (!mounted.current) return;
-        if (event.event === "message.accepted") {
-          const data = event.data as { message_id?: string };
-          if (data.message_id) acceptedId.current = data.message_id;
-          void refresh(id).catch(() => {});
+  const send = useCallback(
+    async (
+      question: string,
+      key: string,
+      options?: {
+        kind?: "question" | "followup" | "action";
+        intent?: "another_hint" | "explain" | "dont_know";
+        parentMessageId?: string;
+      },
+    ) => {
+      acceptedId.current = null;
+      setRecentMessageId(null);
+      setBusy(true);
+      setError("");
+      setPhase("Enviando tu pregunta…");
+      let id = selected;
+      let terminal = false;
+      try {
+        if (!id) id = await createConversation();
+        stream.current = new AbortController();
+        const body: Record<string, unknown> = { question };
+        if (options?.kind) body.kind = options.kind;
+        if (options?.intent) body.intent = options.intent;
+        if (options?.parentMessageId) body.parent_message_id = options.parentMessageId;
+
+        const response = await fetch(`/api/docta/conversations/${id}/messages`, {
+          method: "POST",
+          credentials: "same-origin",
+          signal: stream.current.signal,
+          headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+          body: JSON.stringify(body),
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new DoctaError(error.code);
         }
-        if (phases[event.event]) setPhase(phases[event.event]);
         if (
-          event.event === "message.completed" ||
-          event.event === "message.failed"
+          !response.body ||
+          !response.headers.get("content-type")?.includes("text/event-stream")
         )
-          terminal = true;
+          throw new Error("Invalid response");
+        await readEvents(response.body, (event) => {
+          if (!mounted.current) return;
+          if (event.event === "message.accepted") {
+            const data = event.data as { message_id?: string };
+            if (data.message_id) {
+              acceptedId.current = data.message_id;
+              setRecentMessageId(data.message_id);
+            }
+            void refresh(id).catch(() => {});
+          }
+          if (phases[event.event]) setPhase(phases[event.event]);
+          if (
+            event.event === "message.completed" ||
+            event.event === "message.failed"
+          )
+            terminal = true;
+        });
+        // Render answers only from durable JSON history, never arbitrary SSE content.
+        await refresh(id);
+        if (!terminal) throw new Error("Delivery interrupted");
+        if (mounted.current) setRetry(null);
+      } catch (error) {
+        if (mounted.current) {
+          setError(humanError(error));
+          setRetry({ question, key });
+        }
+      } finally {
+        if (mounted.current) {
+          setBusy(false);
+          setPhase("");
+        }
+      }
+    },
+    [selected, refresh, createConversation],
+  );
+
+  const handleAction = useCallback(
+    async (action: Action, parentMessageId: string) => {
+      if (busy || pending) return;
+      if (action === "view_source") return;
+      const label = action === "another_hint" ? "Otra pista" : "Explícame eso";
+      await send(label, crypto.randomUUID(), {
+        kind: "action",
+        intent: action,
+        parentMessageId,
       });
-      // Render answers only from durable JSON history, never arbitrary SSE content.
-      await refresh(id);
-      if (!terminal) throw new Error("Delivery interrupted");
-      if (mounted.current) setRetry(null);
-    } catch (error) {
-      if (mounted.current) {
-        setError(humanError(error));
-        setRetry({ question, key });
-      }
-    } finally {
-      if (mounted.current) {
-        setBusy(false);
-        setPhase("");
-      }
-    }
-  }
+    },
+    [busy, pending, send],
+  );
 
   const externalMessages: ThreadMessageLike[] = messages.flatMap((message) => {
     const user: ThreadMessageLike = {
@@ -366,10 +438,12 @@ export function TutorPanel({
             : { type: "complete", reason: "stop" },
       metadata: {
         custom: {
+          messageId: message.id,
           state: message.state,
           response: message.response,
           failureCode: message.failure_code,
           phase: message.state === "pending" ? phase : undefined,
+          animate: message.state === "completed" && message.id === recentMessageId,
         },
       },
     };
@@ -394,41 +468,62 @@ export function TutorPanel({
   });
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className="tutor">
-        <div className="chat-toolbar">
-          <div className="conversation-control">
-            <label htmlFor="conversation-select">Conversación</label>
-            {conversations.length > 0 ? (
-              <div className="select-wrap">
-                <select
-                  id="conversation-select"
-                  value={selected}
-                  disabled={busy || pending || loading || !!retry}
-                  onChange={(event) => selectConversation(event.target.value)}
-                >
-                  {conversations.map((row, index) => (
-                    <option value={row.id} key={row.id}>
-                      {new Date(row.created_at).toLocaleDateString("es-CL")} ·
-                      Conversación {conversations.length - index}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown size={15} aria-hidden="true" />
-              </div>
-            ) : (
-              <span>Nueva conversación</span>
-            )}
+    <TutorPanelContext.Provider
+      value={{
+        onAction: handleAction,
+        richEnabled,
+        disabled: busy || pending,
+      }}
+    >
+      <AssistantRuntimeProvider runtime={runtime}>
+        <ThreadPrimitive.Root className="tutor">
+          <div className="chat-toolbar">
+            <div className="conversation-control">
+              <label htmlFor="conversation-select">Conversación</label>
+              {conversations.length > 0 ? (
+                <div className="select-wrap">
+                  <select
+                    id="conversation-select"
+                    value={selected}
+                    disabled={busy || pending || loading || !!retry}
+                    onChange={(event) => selectConversation(event.target.value)}
+                  >
+                    {conversations.map((row, index) => (
+                      <option value={row.id} key={row.id}>
+                        {new Date(row.created_at).toLocaleDateString("es-CL")} ·
+                        Conversación {conversations.length - index}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={15} aria-hidden="true" />
+                </div>
+              ) : (
+                <span>Nueva conversación</span>
+              )}
+            </div>
+            <button
+              className="secondary-button compact-button"
+              disabled={busy || pending || loading || !!retry}
+              onClick={newConversation}
+            >
+              <MessageSquarePlus size={16} />
+              <span>Nueva</span>
+            </button>
+            <button
+              type="button"
+              className="secondary-button compact-button"
+              onClick={() => setRichEnabled((prev) => !prev)}
+              title={
+                richEnabled
+                  ? "Desactivar componentes enriquecidos"
+                  : "Activar componentes enriquecidos"
+              }
+              aria-pressed={richEnabled}
+            >
+              <Sparkles size={16} />
+              <span>{richEnabled ? "Enriquecido" : "Solo texto"}</span>
+            </button>
           </div>
-          <button
-            className="secondary-button compact-button"
-            disabled={busy || pending || loading || !!retry}
-            onClick={newConversation}
-          >
-            <MessageSquarePlus size={16} />
-            <span>Nueva</span>
-          </button>
-        </div>
         <ThreadPrimitive.Viewport
           className={`thread-body ${!loading && messages.length === 0 ? "empty-thread" : ""}`}
         >
@@ -506,5 +601,6 @@ export function TutorPanel({
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
+  </TutorPanelContext.Provider>
   );
 }

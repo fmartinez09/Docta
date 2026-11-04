@@ -21,11 +21,13 @@ test("teacher publication, student citations, reload, abstention and durable fai
   browser,
 }, info) => {
   await login(page, "teacher", true);
-  await page
-    .getByRole("button", { name: "Crear curso", exact: true })
-    .first()
-    .click();
   const createDialog = page.getByRole("dialog", { name: "Crear curso" });
+  await expect(async () => {
+    if (!(await createDialog.isVisible())) {
+      await page.getByRole("button", { name: "Crear curso", exact: true }).first().click();
+    }
+    await expect(createDialog).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 20000 });
   await createDialog.getByLabel("Nombre del curso").fill("Física · Laboratorio");
   await createDialog
     .getByRole("button", { name: "Crear curso", exact: true })
@@ -115,6 +117,43 @@ test("teacher publication, student citations, reload, abstention and durable fai
     fullPage: true,
   });
 
+  for (const [index, question] of ["desplazamiento", "tiempo"].entries()) {
+    await student.getByLabel("Tu pregunta").fill(question);
+    await student.getByRole("button", { name: "Enviar pregunta" }).click();
+    const turn = student.locator(".assistant-turn").nth(index + 1);
+    await expect(turn.getByText("Relaciona desplazamiento y tiempo.")).toBeVisible();
+    await expect(turn.locator(".rich-fallback")).toHaveCount(0);
+    await expect(turn.getByLabel("Fuentes")).toBeVisible();
+    await expect(turn.getByText("Cálculo de la velocidad")).toBeVisible();
+    await expect(turn.getByRole("heading", { name: "Ahora te toca razonar" })).toBeVisible();
+  }
+  const richTurns = student.locator(".assistant-turn");
+  const activity = richTurns.nth(2);
+  await expect(activity.getByRole("button", { name: "Comprobar mi respuesta" })).toBeDisabled();
+  await activity.getByRole("button", { name: "Necesito una pista" }).click();
+  await expect(activity.getByText("Revisa qué se divide por el tiempo.")).toBeVisible();
+  await activity.getByLabel("Tiempo dividido por desplazamiento").check();
+  await activity.getByRole("button", { name: "Comprobar mi respuesta" }).click();
+  await expect(activity.getByText("Aún no es correcto. Inténtalo de nuevo.")).toBeVisible();
+  await activity.getByLabel("Desplazamiento dividido por tiempo").check();
+  await activity.getByRole("button", { name: "Comprobar mi respuesta" }).click();
+  await expect(activity.getByText("Correcto.", { exact: false })).toBeVisible();
+  await expect(activity.getByText("El material indica desplazamiento dividido por tiempo.")).toBeVisible();
+  await student.evaluate(() => {
+    Element.prototype.scrollIntoView = function () { this.setAttribute("data-scroll-target", "true"); };
+  });
+  await richTurns.nth(2).getByRole("button", { name: "Ver fuente" }).click();
+  await expect(richTurns.nth(2).getByLabel("Fuentes")).toHaveAttribute("data-scroll-target", "true");
+  await expect(richTurns.nth(2).getByLabel("Fuentes")).toHaveJSProperty("open", true);
+  await expect(richTurns.nth(1).getByLabel("Fuentes")).not.toHaveAttribute("data-scroll-target", "true");
+  await student.getByRole("button", { name: "Enriquecido" }).click();
+  await expect(richTurns.nth(2).locator(".rich-fallback")).toBeVisible();
+  await richTurns.nth(2).getByLabel("Desplazamiento dividido por tiempo").check();
+  await richTurns.nth(2).getByRole("button", { name: "Comprobar mi respuesta" }).click();
+  await expect(richTurns.nth(2).getByText("Correcto.", { exact: false })).toBeVisible();
+  await student.getByRole("button", { name: "Solo texto" }).click();
+  await expect(richTurns.nth(2).getByLabel("Explicación")).toBeVisible();
+
   await student
     .getByLabel("Tu pregunta")
     .fill("astronomia galactica desconocida");
@@ -128,7 +167,7 @@ test("teacher publication, student citations, reload, abstention and durable fai
     student.getByText("No pudimos completar esta respuesta", { exact: true }),
   ).toBeVisible();
   await student.reload();
-  await expect(student.locator(".student-message")).toHaveCount(3);
+  await expect(student.locator(".student-message")).toHaveCount(5);
   await expect(
     student.getByText("No pudimos completar esta respuesta", { exact: true }),
   ).toBeVisible();

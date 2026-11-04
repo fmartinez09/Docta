@@ -42,7 +42,7 @@ def authorize_retrieval(session: Session, scope: RetrievalScope, query: str) -> 
             Message.corpus_version_id == scope.corpus_version_id,
             Message.conversation_id == scope.conversation_id,
             Message.state == MessageState.PENDING,
-            Message.question == query,
+            func.coalesce(Message.retrieval_query, Message.question) == query,
             Message.deadline_at > func.now(),
             Conversation.owner_user_id == scope.principal_user_id,
             CorpusVersion.state == "READY",

@@ -15,6 +15,7 @@ from docta_api.rag import (
     Retriever,
     TutorModel,
     abstention,
+    clarification,
 )
 
 SAFE_FAILURES = frozenset(
@@ -90,22 +91,25 @@ class ConversationRuntime:
     async def _pipeline(self, accepted: AcceptedMessage) -> None:
         request = await to_thread.run_sync(self.service.request, accepted, ())
         started = perf_counter()
-        self._phase(accepted, "retrieval")
-        evidence = await to_thread.run_sync(
-            self.retriever.retrieve, request.scope, request.question
-        )
-        await to_thread.run_sync(self.service.save_evidence, accepted, evidence)
-        for document_version_id in sorted({item.document_version_id for item in evidence}):
-            self.service.log(accepted, "retrieve", "completed", started, document_version_id)
-        request = replace(request, evidence=evidence)
-        self._phase(accepted, "retrieval", "completed", started)
-        started = perf_counter()
-        if evidence:
-            self._phase(accepted, "generation")
-            draft = await self.model.generate(request)
-            self.service.log(accepted, "generate", "completed", started)
+        if request.needs_antecedent:
+            self._phase(accepted, "clarification")
+            draft = clarification()
         else:
-            draft = abstention()
+            self._phase(accepted, "retrieval")
+            query = request.retrieval_query or request.question
+            evidence = await to_thread.run_sync(self.retriever.retrieve, request.scope, query)
+            await to_thread.run_sync(self.service.save_evidence, accepted, evidence)
+            for document_version_id in sorted({item.document_version_id for item in evidence}):
+                self.service.log(accepted, "retrieve", "completed", started, document_version_id)
+            request = replace(request, evidence=evidence)
+            self._phase(accepted, "retrieval", "completed", started)
+            started = perf_counter()
+            if evidence:
+                self._phase(accepted, "generation")
+                draft = await self.model.generate(request)
+                self.service.log(accepted, "generate", "completed", started)
+            else:
+                draft = abstention()
         self._phase(accepted, "validation")
         started = perf_counter()
         draft = self.validator.validate(draft, request)

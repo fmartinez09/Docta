@@ -12,15 +12,23 @@ from sqlalchemy.exc import SQLAlchemyError
 from docta_api.api_errors import APIError
 from docta_api.conversation_models import MessageState
 from docta_api.conversation_runtime import ConversationRuntime
-from docta_api.conversations import ConversationView, HistoryView, MessageView, QuestionRequest
+from docta_api.conversations import (
+    ActionRequest,
+    ConversationView,
+    HistoryView,
+    MessageView,
+    QuestionRequest,
+)
 from docta_api.courses import RequiredIdentity
 
 router = APIRouter(prefix="/api/v1", tags=["conversations"])
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 
 
-async def _database_call(function, *args):
+async def _database_call(function, *args, **kwargs):
     try:
+        if kwargs:
+            return await to_thread.run_sync(lambda: function(*args, **kwargs))
         return await to_thread.run_sync(function, *args)
     except SQLAlchemyError as error:
         raise APIError(
@@ -90,6 +98,9 @@ async def ask_question(
             payload.question,
             idempotency_key,
             request.state.request_id,
+            kind=payload.kind,
+            intent=payload.intent,
+            parent_message_id=payload.parent_message_id,
         )
         runtime.start(accepted)
     progress = runtime.progress.get(accepted.message.id, [])
@@ -132,4 +143,34 @@ async def ask_question(
             "Cache-Control": "no-cache, no-store",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/actions",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {"schema": {"type": "string"}}}}},
+)
+async def perform_action(
+    conversation_id: UUID,
+    payload: ActionRequest,
+    request: Request,
+    identity: RequiredIdentity,
+    idempotency_key: IdempotencyKey = None,
+) -> StreamingResponse:
+    question = payload.question or (
+        "Otra pista" if payload.action == "another_hint" else "Explícame eso"
+    )
+    question_payload = QuestionRequest(
+        question=question,
+        kind="action",
+        intent=payload.action,
+        parent_message_id=payload.parent_message_id,
+    )
+    return await ask_question(
+        conversation_id=conversation_id,
+        payload=question_payload,
+        request=request,
+        identity=identity,
+        idempotency_key=idempotency_key,
     )

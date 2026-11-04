@@ -1,2 +1,1 @@
 """Docta API package."""
-

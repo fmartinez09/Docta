@@ -110,8 +110,7 @@ def _upload_dev_pdf(
     upload_url = _required_string(upload, "upload_url", "upload response")
     upload_headers = upload.get("headers")
     if not isinstance(upload_headers, Mapping) or not all(
-        isinstance(key, str) and isinstance(value, str)
-        for key, value in upload_headers.items()
+        isinstance(key, str) and isinstance(value, str) for key, value in upload_headers.items()
     ):
         raise DevPDFUploadError("The upload response did not contain valid signed headers.")
 
@@ -139,7 +138,9 @@ def _upload_dev_pdf(
             )
         sleep(1)
         completed = _request_json(
-            client, "observe ingestion", "GET",
+            client,
+            "observe ingestion",
+            "GET",
             f"{base_url}/api/v1/courses/{course_id}/documents/{document_id}/versions/{version_id}",
             headers=authorization,
         )
@@ -188,9 +189,7 @@ def _request_json(
     if not response.is_success:
         error_code = _safe_api_error_code(response)
         suffix = f", code={error_code}" if error_code is not None else ""
-        raise DevPDFUploadError(
-            f"Could not {operation}: HTTP {response.status_code}{suffix}."
-        )
+        raise DevPDFUploadError(f"Could not {operation}: HTTP {response.status_code}{suffix}.")
     try:
         document = response.json()
     except ValueError as error:

@@ -18,6 +18,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from docta_api.models import Base
@@ -63,6 +64,21 @@ class Message(Base):
         ),
         UniqueConstraint("conversation_id", "idempotency_key", name="uq_messages_idempotency"),
         UniqueConstraint("conversation_id", "sequence", name="uq_messages_sequence"),
+        UniqueConstraint("conversation_id", "id", name="uq_messages_conversation_id"),
+        ForeignKeyConstraint(
+            ["conversation_id", "parent_message_id"],
+            ["messages.conversation_id", "messages.id"],
+            ondelete="CASCADE",
+            name="fk_messages_parent",
+        ),
+        CheckConstraint("kind IN ('question', 'followup', 'action')", name="ck_messages_kind"),
+        CheckConstraint(
+            "intent IS NULL OR intent IN ('another_hint', 'explain', 'dont_know')",
+            name="ck_messages_intent",
+        ),
+        CheckConstraint(
+            "(kind = 'action') = (parent_message_id IS NOT NULL)", name="ck_messages_parent"
+        ),
         UniqueConstraint("course_id", "corpus_version_id", "id", name="uq_messages_scope"),
         CheckConstraint("state IN ('pending', 'completed', 'failed')", name="ck_messages_state"),
         CheckConstraint("length(btrim(question)) BETWEEN 1 AND 4000", name="ck_messages_question"),
@@ -77,7 +93,7 @@ class Message(Base):
             name="ck_messages_terminal_payload",
         ),
         CheckConstraint(
-            "mode IS NULL OR mode IN ('hint','guided_question','explanation','abstain')",
+            "mode IS NULL OR mode IN ('hint','guided_question','explanation','abstain','clarify')",
             name="ck_messages_mode",
         ),
         Index(
@@ -105,6 +121,17 @@ class Message(Base):
     prompt_version: Mapped[str] = mapped_column(String(100))
     retrieval_config_version: Mapped[str] = mapped_column(String(100))
     model_version: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(16), server_default="question")
+    intent: Mapped[str | None] = mapped_column(String(16))
+    parent_message_id: Mapped[UUID | None] = mapped_column()
+    # Server-derived retrieval query for follow-ups/actions; the original input stays in `question`.
+    retrieval_query: Mapped[str | None] = mapped_column(Text)
+    query_version: Mapped[str | None] = mapped_column(String(64))
+    # Validated structured response and minimal continuity metadata, committed with the citations.
+    intervention: Mapped[dict | None] = mapped_column(JSONB)
+    contract_version: Mapped[str | None] = mapped_column(String(64))
+    situation: Mapped[str | None] = mapped_column(String(32))
+    help_level: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

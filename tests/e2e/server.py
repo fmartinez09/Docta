@@ -18,7 +18,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from docta_api.config import Settings
 from docta_api.main import create_app
-from docta_api.rag import DraftCitation, RAGFailure, TutorDraft
+from docta_api.rag import DraftCitation, RAGFailure, TutorDraft, draft_from_intervention
+from docta_api.tutor_contract import TutorIntervention
 
 
 class BrowserTestTutor:
@@ -34,6 +35,52 @@ class BrowserTestTutor:
         if "fallo" in request.question.lower():
             raise RAGFailure("MODEL_UNAVAILABLE")
         evidence = request.evidence[0]
+        if request.question.lower() in {"desplazamiento", "tiempo"}:
+            return draft_from_intervention(
+                TutorIntervention.model_validate(
+                    {
+                        "version": "tutor-intervention-v2",
+                        "situation": "missing_concept",
+                        "blocks": [
+                            {
+                                "type": "explanation",
+                                "title": "Velocidad",
+                                "text": "Relaciona desplazamiento y tiempo.",
+                            },
+                            {
+                                "type": "diagram",
+                                "kind": "sequence",
+                                "title": "Cálculo de la velocidad",
+                                "nodes": [
+                                    {"id": "a", "label": "Desplazamiento"},
+                                    {"id": "b", "label": "Dividir por el tiempo"},
+                                    {"id": "c", "label": "Velocidad"},
+                                ],
+                                "edges": [
+                                    {"source": "a", "target": "b", "label": ""},
+                                    {"source": "b", "target": "c", "label": ""},
+                                ],
+                            },
+                            {
+                                "type": "activity",
+                                "question": "¿Cómo se calcula la velocidad?",
+                                "options": [
+                                    {"id": "a", "text": "Desplazamiento dividido por tiempo"},
+                                    {"id": "b", "text": "Tiempo dividido por desplazamiento"},
+                                ],
+                                "correct_option_id": "a",
+                                "hint": "Revisa qué se divide por el tiempo.",
+                                "explanation": (
+                                    "El material indica desplazamiento dividido por tiempo."
+                                ),
+                            },
+                            {"type": "sources", "citation_indexes": [0]},
+                        ],
+                        "citations": [{"chunk_id": evidence.chunk_id, "quote": evidence.content}],
+                        "grounded": True,
+                    }
+                )
+            )
         return TutorDraft(
             mode="guided_question",
             answer="Identifica el desplazamiento y el tiempo. ¿Cómo se relacionan?",

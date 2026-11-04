@@ -1,3 +1,5 @@
+import type { TutorIntervention } from "./tutor-contract";
+
 export type Course = {
   id: string;
   title: string;
@@ -37,9 +39,13 @@ export type Message = {
     answer: string;
     grounded: boolean;
     citations: Citation[];
+    intervention?: TutorIntervention;
   } | null;
   failure_code: string | null;
   created_at: string;
+  kind?: string;
+  intent?: string | null;
+  parent_message_id?: string | null;
 };
 export type History = {
   messages: Message[];

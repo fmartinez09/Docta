@@ -108,7 +108,8 @@ def _default_tutor_model(settings: Settings) -> TutorModel:
         return UnconfiguredTutorModel()
     assert settings.tutor_model is not None and settings.tutor_api_key is not None
     return ChatCompletionsTutorModel(
-        endpoint=str(settings.tutor_endpoint_url), model=settings.tutor_model,
+        endpoint=str(settings.tutor_endpoint_url),
+        model=settings.tutor_model,
         api_key=settings.tutor_api_key.get_secret_value(),
         timeout_seconds=settings.tutor_timeout_seconds,
         max_output_tokens=settings.tutor_max_output_tokens,
@@ -159,7 +160,8 @@ def create_app(
         assert database is not None
         resolved_retriever = retriever or _default_retriever(resolved_settings, database)
         conversation_service = ConversationService(
-            database, model_version=resolved_model.version,
+            database,
+            model_version=resolved_model.version,
             retrieval_version=resolved_retriever.version,
             message_timeout_seconds=resolved_settings.message_timeout_seconds,
         )
@@ -168,7 +170,10 @@ def create_app(
             resolved_settings, conversation_service.database
         )
     conversation_runtime = ConversationRuntime(
-        conversation_service, resolved_retriever, resolved_model, EvidenceResponseValidator(),
+        conversation_service,
+        resolved_retriever,
+        resolved_model,
+        EvidenceResponseValidator(),
     )
 
     @asynccontextmanager

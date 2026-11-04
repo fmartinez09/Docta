@@ -12,11 +12,13 @@
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.18",
+    "@openuidev/react-lang": "^1.0.2",
     "@radix-ui/react-dialog": "^1.1.23",
     "lucide-react": "^1.45.0",
     "next": "16.4.3",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
