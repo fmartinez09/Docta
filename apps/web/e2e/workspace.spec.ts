@@ -85,8 +85,17 @@ test("teacher publication, student citations, reload, abstention and durable fai
   expect(csrf.status()).toBe(403);
 
   await student.getByLabel("Tu pregunta").fill("velocidad");
+  // The optimistic pending indicator can appear before the API has persisted the question.
+  // The streaming response headers arrive only after the API accepts and commits it.
+  const accepted = student.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/docta\/conversations\/[^/]+\/messages$/.test(response.url()) &&
+      response.status() === 200,
+  );
   await student.getByRole("button", { name: "Enviar pregunta" }).click();
   await expect(student.locator(".pending-state")).toBeVisible();
+  await accepted;
   await student.reload();
   await expect(
     student.getByText(

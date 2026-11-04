@@ -33,23 +33,24 @@ services:
     volumes:
       - redis-test-data:/data
 
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    command: server /data --console-address ":9001"
+  rustfs:
+    image: rustfs/rustfs:1.0.4@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
     environment:
-      MINIO_ROOT_USER: docta-test
-      MINIO_ROOT_PASSWORD: docta-test-secret
+      RUSTFS_ACCESS_KEY: docta-test
+      RUSTFS_SECRET_KEY: docta-test-secret
+      # The isolated browser test chooses a random loopback port.
+      RUSTFS_CORS_ALLOWED_ORIGINS: "*"
     ports:
-      - "127.0.0.1:${DOCTA_TEST_MINIO_PORT:-59000}:9000"
+      - "127.0.0.1:${DOCTA_TEST_STORAGE_PORT:-59000}:9000"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health/ready"]
       interval: 2s
       timeout: 3s
       retries: 15
     volumes:
-      - minio-test-data:/data
+      - rustfs-test-data:/data
 
 volumes:
   postgres-test-data:
   redis-test-data:
-  minio-test-data:
+  rustfs-test-data:

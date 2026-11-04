@@ -1,0 +1,17 @@
+{
+    # Proxy errors may include signed URLs or callback data in the request object.
+    log default {
+        format filter {
+            request delete
+            error delete
+        }
+    }
+}
+
+{$DOCTA_WEB_DOMAIN} {
+    reverse_proxy web:3000
+}
+
+{$DOCTA_STORAGE_DOMAIN} {
+    reverse_proxy rustfs:9000
+}

@@ -72,7 +72,7 @@ def _settings() -> Settings:
     return Settings(
         environment="test",
         database_url="postgresql://docta:secret@localhost:5432/docta",
-        minio_health_url="http://localhost:9000/minio/health/ready",
+        storage_health_url="http://localhost:9000/health/ready",
     )
 
 

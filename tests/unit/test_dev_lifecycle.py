@@ -16,7 +16,7 @@ def test_runtime_processes_do_not_receive_iam_administrator_secrets():
         "DOCTA_TUTOR_MODEL": "local-model",
         "DOCTA_TUTOR_API_KEY": "private-model-key",
         "POSTGRES_PASSWORD": "database-password",
-        "MINIO_ROOT_PASSWORD": "storage-password",
+        "RUSTFS_SECRET_KEY": "storage-password",
         "DOCTA_DEV_LOGIN_PASSWORD": "iam-password",
         "DOCTA_DEV_IAM_MASTERKEY": "12345678901234567890123456789012",
     }
@@ -26,7 +26,7 @@ def test_runtime_processes_do_not_receive_iam_administrator_secrets():
         assert "DOCTA_DEV_LOGIN_PASSWORD" not in runtime
         assert "DOCTA_DEV_IAM_MASTERKEY" not in runtime
         assert "POSTGRES_PASSWORD" not in runtime
-        assert "MINIO_ROOT_PASSWORD" not in runtime
+        assert "RUSTFS_SECRET_KEY" not in runtime
     assert dev.runtime_values(values, "api")["DOCTA_TUTOR_API_KEY"] == "private-model-key"
     assert "DOCTA_TUTOR_API_KEY" not in dev.runtime_values(values, "worker")
     assert "DOCTA_TUTOR_API_KEY" not in dev.runtime_values(values, "web")
@@ -78,12 +78,12 @@ def test_worker_override_passes_embedder_variables_without_defaults():
 def test_process_environment_removes_host_service_credentials(monkeypatch):
     monkeypatch.setenv("DOCTA_DEV_LOGIN_PASSWORD", "host-iam-password")
     monkeypatch.setenv("POSTGRES_PASSWORD", "host-database-password")
-    monkeypatch.setenv("MINIO_ROOT_PASSWORD", "host-storage-password")
+    monkeypatch.setenv("RUSTFS_SECRET_KEY", "host-storage-password")
     environment = dev.process_environment({"DOCTA_DATABASE_URL": "postgresql://managed"})
     assert environment["DOCTA_DATABASE_URL"] == "postgresql://managed"
     assert "DOCTA_DEV_LOGIN_PASSWORD" not in environment
     assert "POSTGRES_PASSWORD" not in environment
-    assert "MINIO_ROOT_PASSWORD" not in environment
+    assert "RUSTFS_SECRET_KEY" not in environment
 
 
 def test_daily_start_rejects_unregistered_identity_before_touching_docker(monkeypatch):
@@ -112,7 +112,7 @@ def test_daily_start_skips_compose_start_when_services_are_already_healthy(monke
         inspected.append(project)
         services = (
             ("proxy", "postgres", "zitadel-api", "zitadel-login")
-            if project == "docta-dev-iam" else ("postgres", "redis", "minio")
+            if project == "docta-dev-iam" else ("postgres", "redis", "rustfs")
         )
         output = "".join(f"{service}|running|Up 2 minutes (healthy)\n" for service in services)
         return subprocess.CompletedProcess(command, 0, stdout=output)

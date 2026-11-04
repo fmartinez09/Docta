@@ -35,7 +35,7 @@ packages = ["apps/api/src/docta_api"]
 addopts = "-ra --strict-markers"
 testpaths = ["tests"]
 markers = [
-  "integration: requires the local PostgreSQL, Redis and MinIO services",
+  "integration: requires the local PostgreSQL, Redis and RustFS services",
 ]
 
 [tool.ruff]
