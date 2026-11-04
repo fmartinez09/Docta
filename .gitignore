@@ -14,6 +14,8 @@ artifacts/
 test-results/
 playwright-report/
 
+apps/web/next-env.d.ts
+
 .idea/
 .vscode/
 .DS_Store

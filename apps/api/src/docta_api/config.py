@@ -1,6 +1,6 @@
 import os
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     AnyHttpUrl,
@@ -12,6 +12,12 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from docta_api.embedding import (
+    MAX_EMBED_MODEL_LENGTH,
+    MAX_EMBEDDING_DIMENSIONS,
+    TEXT_PLACEHOLDER,
+)
 
 OIDCIssuerUrl = Annotated[
     AnyUrl,
@@ -67,6 +73,66 @@ class Settings(BaseSettings):
     tutor_schema_profile: Literal["standard", "llama_cpp"] = "standard"
     tutor_provider: Literal["chat_completions", "unsloth"] = "chat_completions"
     message_timeout_seconds: int = Field(default=90, ge=5, le=180)
+    retrieval_mode: Literal["fts", "dense"] = "fts"
+    embed_endpoint_url: AnyHttpUrl | None = None
+    embed_model: str | None = Field(default=None, min_length=1, max_length=MAX_EMBED_MODEL_LENGTH)
+    embed_api_key: SecretStr | None = None
+    embed_dimensions: int | None = Field(default=None, ge=1, le=MAX_EMBEDDING_DIMENSIONS)
+    embed_timeout_seconds: int = Field(default=10, ge=1, le=60)
+    embed_batch_size: int = Field(default=32, ge=1, le=256)
+    embed_query_template: str = TEXT_PLACEHOLDER
+    embed_document_template: str = TEXT_PLACEHOLDER
+    embed_input_type: Literal["off", "nvidia"] = "off"
+    embed_provider_routing: dict[str, Any] | None = None
+    dense_max_distance: float | None = Field(default=None, gt=0, le=2)
+
+    @model_validator(mode="after")
+    def validate_embedder_configuration(self) -> "Settings":
+        values = (
+            self.embed_endpoint_url,
+            self.embed_model,
+            self.embed_api_key,
+            self.embed_dimensions,
+        )
+        configured = sum(value is not None for value in values)
+        if configured not in (0, len(values)):
+            raise ValueError(
+                "Embedding endpoint, model, API key and dimensions must be configured together"
+            )
+        if self.retrieval_mode == "dense" and configured == 0:
+            raise ValueError("Dense retrieval requires an embedder configuration")
+        if self.retrieval_mode == "dense" and self.dense_max_distance is None:
+            raise ValueError("Dense retrieval requires a maximum distance threshold")
+        for template in (self.embed_query_template, self.embed_document_template):
+            if template.count(TEXT_PLACEHOLDER) != 1:
+                raise ValueError("Embedding templates must contain {text} exactly once")
+        routing = self.embed_provider_routing
+        if routing is not None and (not routing or routing.get("allow_fallbacks") is not False):
+            raise ValueError("Embedding provider routing must set allow_fallbacks to false")
+        if configured == 0:
+            return self
+        if not self.embed_api_key.get_secret_value().strip():  # type: ignore[union-attr]
+            raise ValueError("Embedding API key must not be blank")
+        url = self.embed_endpoint_url
+        if url.username or url.password or url.query or url.fragment:  # type: ignore[union-attr]
+            raise ValueError("Embedding endpoint must not contain credentials, query or fragment")
+        if self.environment == "production":
+            if url.scheme != "https":  # type: ignore[union-attr]
+                raise ValueError("Embedding endpoint requires HTTPS in production")
+            normalized_model = "".join(self.embed_model.split()).lower()  # type: ignore[union-attr]
+            if normalized_model.endswith(":free"):
+                raise ValueError("Free embedding model variants are not allowed in production")
+        if (
+            self.retrieval_mode == "dense"
+            and self.embed_timeout_seconds + self.tutor_timeout_seconds
+            >= self.message_timeout_seconds
+        ):
+            raise ValueError("Embedding plus tutor timeout must be shorter than message timeout")
+        return self
+
+    @property
+    def embedder_configured(self) -> bool:
+        return self.embed_endpoint_url is not None
 
     @model_validator(mode="after")
     def validate_tutor_configuration(self) -> "Settings":

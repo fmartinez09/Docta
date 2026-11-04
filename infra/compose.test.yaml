@@ -2,7 +2,10 @@ name: docta-test
 
 services:
   postgres:
-    image: postgres:16.10-alpine
+    build:
+      context: .
+      dockerfile: postgres.Dockerfile
+    image: docta-postgres:16.10-pgvector0.8.7
     environment:
       POSTGRES_USER: docta_test
       POSTGRES_PASSWORD: docta_test_only

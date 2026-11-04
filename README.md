@@ -310,7 +310,39 @@ Useful failure codes include:
 | `MODEL_OUTPUT_INVALID` | The response was refused, truncated, malformed, or cited unsupported text. |
 | `COURSE_CORPUS_NOT_READY` | Publish an indexed corpus and submit a new question. |
 | `RETRIEVAL_SCOPE_INVALID` | Authorization or course/corpus binding failed closed; inspect scope rather than loosening filters. |
+| `RETRIEVAL_UNAVAILABLE` | Dense retrieval could not embed the question (not retried); the question stays saved and the message is `failed`. |
+| `RETRIEVAL_INDEX_MISSING` | Some indexed chunks lack embeddings for the configured embedding version; re-import the documents. |
+| `EMBEDDING_UNAVAILABLE` | Ingestion: transient embedding failure; the job retries within its existing bounded retry. |
+| `EMBEDDING_INVALID` | Ingestion: non-transient embedding failure; the document is marked `FAILED`. |
 | `PROCESSING_INTERRUPTED` | Shutdown, deadline, or abandoned execution; the question remains durable and is not automatically retried. |
+
+## Retrieval modes
+
+Retrieval uses `DOCTA_RETRIEVAL_MODE=fts` by default (PostgreSQL full-text search). `dense` is
+opt-in and ranks chunks of the active corpus by embedding similarity.
+
+- `dense` requires the complete embedder: `DOCTA_EMBED_ENDPOINT_URL`, `DOCTA_EMBED_MODEL`,
+  `DOCTA_EMBED_API_KEY` and `DOCTA_EMBED_DIMENSIONS`. Configure all four or none. It also needs
+  `DOCTA_DENSE_MAX_DISTANCE`, the cosine-distance threshold.
+- `DOCTA_EMBED_INPUT_TYPE=nvidia` sends `query` for questions and `passage` for documents. The
+  default, `off`, sends no input type.
+- `DOCTA_EMBED_TIMEOUT_SECONDS` defaults to 10. Free endpoints can take 3 to 16 seconds, so use
+  at least 30. With `dense`, startup rejects a configuration where the embed timeout plus the
+  tutor timeout is not shorter than the message timeout.
+- Embeddings are computed during ingestion whenever an embedder is configured, in either mode.
+  There is no backfill: to obtain embeddings for a document, upload and publish it again.
+- With `dense`, an active corpus without embeddings for the configured embedding version fails
+  with `RETRIEVAL_INDEX_MISSING`. Dense retrieval never falls back to FTS.
+- The distance threshold is provisional. It depends on the embedding version (model, dimensions,
+  and a hash of the templates and extra request options), so recalibrate it when the model,
+  templates or input type change.
+- Dense retrieval does not filter out questions the document does not answer. Abstention is the
+  tutor's responsibility.
+- `:free` model variants are rejected in production.
+- Keys belong only in the private profile. In the dev container that is
+  `/var/lib/docta-dev/.env`; `npm run dev:configure` manages only the tutor variables, so add the
+  embedder variables to that file by hand. Never place keys in versioned files.
+- The PostgreSQL image with pgvector is rebuilt by `npm run dev:setup` and by the checks.
 
 ## Ingestion and durability
 

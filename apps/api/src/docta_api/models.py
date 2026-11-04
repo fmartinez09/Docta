@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
@@ -303,6 +304,28 @@ class Chunk(Base):
         TSVECTOR,
         Computed("to_tsvector('spanish'::regconfig, coalesce(content, ''))", persisted=True),
     )
+
+
+class ChunkEmbedding(Base):
+    __tablename__ = "chunk_embeddings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["course_id", "corpus_version_id", "chunk_id"],
+            ["chunks.course_id", "chunks.corpus_version_id", "chunks.id"],
+            name="fk_chunk_embeddings_chunk",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("dims > 0", name="ck_chunk_embeddings_dims_positive"),
+        CheckConstraint("vector_dims(embedding) = dims", name="ck_chunk_embeddings_dims"),
+        Index("ix_chunk_embeddings_scope", "course_id", "corpus_version_id", "embedding_version"),
+    )
+
+    chunk_id: Mapped[UUID] = mapped_column(primary_key=True)
+    embedding_version: Mapped[str] = mapped_column(String(200), primary_key=True)
+    course_id: Mapped[UUID] = mapped_column(nullable=False)
+    corpus_version_id: Mapped[UUID] = mapped_column(nullable=False)
+    dims: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: Mapped[object] = mapped_column(Vector(), nullable=False)
 
 
 class IngestionJob(Base):

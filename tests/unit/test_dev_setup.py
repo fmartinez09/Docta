@@ -609,6 +609,40 @@ def test_checks_remove_development_credentials_and_keep_test_ports(monkeypatch):
         assert options["inherit_identity"] is False
 
 
+def test_bootstrap_builds_postgres_image_when_starting_infrastructure(tmp_path, monkeypatch):
+    commands = []
+
+    def capture(command, env, **kwargs):
+        commands.append(command)
+        if "cp" in command:
+            Path(command[-1]).write_text("pat")
+
+    class FakeProvisioner:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def provision(self, values, recover_identity=False):
+            return {}
+
+    monkeypatch.setattr(dev, "run", capture)
+    monkeypatch.setattr(dev, "profile_path", lambda name: tmp_path / name)
+    monkeypatch.setattr(dev, "start_iam", lambda values: None)
+    monkeypatch.setattr(dev, "Provisioner", FakeProvisioner)
+    monkeypatch.setattr(dev, "update_env", lambda path, updates: None)
+    monkeypatch.setattr(dev, "show_status", lambda values: None)
+    dev.bootstrap({"DOCTA_OIDC_ISSUER": TEST_ISSUER})
+    infra_up = next(c for c in commands if "up" in c and "docta-dev" in c)
+    assert infra_up[-4:] == ["up", "-d", "--build", "--wait"]
+
+
+def test_full_check_builds_test_stack_images(monkeypatch):
+    commands = []
+    monkeypatch.setattr(dev, "run", lambda command, env, **kwargs: commands.append(command))
+    dev.check({}, full=True)
+    test_up = next(c for c in commands if "docta-test" in c)
+    assert test_up[-4:] == ["up", "-d", "--build", "--wait"]
+
+
 def test_first_configuration_accepts_own_accounts_and_google_without_starting_services(
     tmp_path, monkeypatch, capsys
 ):

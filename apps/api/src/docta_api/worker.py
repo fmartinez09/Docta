@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from docta_api.config import Settings, get_settings
 from docta_api.database import Database
+from docta_api.embedding_http import build_embedder
 from docta_api.ingestion import IngestionWorker
 from docta_api.jobs import OutboxRelay, log_job
 from docta_api.pymupdf_parser import PyMuPDFDocumentParser
@@ -49,6 +50,7 @@ class WorkerRuntime:
             lease_seconds=settings.job_lease_seconds,
             max_attempts=settings.job_max_attempts,
             retry_base_seconds=settings.job_retry_base_seconds,
+            embedder=build_embedder(settings),
         )
         self._last_reconcile = float("-inf")
 
