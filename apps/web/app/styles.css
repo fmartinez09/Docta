@@ -1471,3 +1471,249 @@ p {
     transition-duration: 0.01ms !important;
   }
 }
+
+.rich-root {
+  display: grid;
+  gap: 10px;
+}
+
+.rich-presentation-notice {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.rich-response,
+.rich-fallback {
+  display: grid;
+  gap: 10px;
+}
+
+.rich-block {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.rich-explanation {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.rich-explanation .rich-label {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.rich-explanation p,
+.rich-text {
+  line-height: 1.75;
+}
+
+.rich-sources {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.rich-sources > summary {
+  width: fit-content;
+  cursor: pointer;
+  padding: 7px 0;
+  font-weight: 600;
+}
+
+.rich-sources > summary:hover { color: var(--ink); }
+
+.rich-animate .rich-response > div,
+.rich-animate .rich-fallback > p,
+.rich-animate .rich-fallback > .rich-activity {
+  animation: rich-reveal 300ms ease-out both;
+}
+
+.rich-animate .rich-response > div:nth-child(2),
+.rich-animate .rich-fallback > :nth-child(2) { animation-delay: 120ms; }
+.rich-animate .rich-response > div:nth-child(3),
+.rich-animate .rich-fallback > :nth-child(3) { animation-delay: 240ms; }
+.rich-animate .rich-response > div:nth-child(4),
+.rich-animate .rich-fallback > :nth-child(4) { animation-delay: 360ms; }
+.rich-animate .rich-response > div:nth-child(5),
+.rich-animate .rich-fallback > :nth-child(5) { animation-delay: 480ms; }
+
+@keyframes rich-reveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rich-animate .rich-response > div,
+  .rich-animate .rich-fallback > p,
+  .rich-animate .rich-fallback > .rich-activity { animation: none; }
+}
+
+.rich-block p,
+.rich-text {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+
+.rich-label {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.rich-hint {
+  border-left-style: dashed;
+}
+
+.rich-explanation {
+  border-left-style: double;
+}
+
+.rich-diagram ol,
+.rich-diagram ul {
+  margin: 6px 0 0;
+  padding-left: 22px;
+}
+
+.rich-diagram .rich-sequence {
+  display: grid;
+  gap: 0;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rich-sequence-card {
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--soft);
+  text-align: center;
+}
+
+.rich-sequence-arrow {
+  display: flex;
+  min-height: 25px;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rich-activity {
+  display: grid;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.rich-activity h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.rich-activity fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.rich-activity legend {
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.rich-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.rich-option input { margin-top: 4px; }
+
+.rich-activity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rich-activity-hint,
+.rich-activity-feedback {
+  margin: 0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--soft);
+}
+
+.rich-node {
+  font-weight: 600;
+}
+
+.rich-edge,
+.rich-meta {
+  color: var(--muted);
+}
+
+.rich-source,
+.rich-citations li {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--soft);
+}
+
+.rich-citations {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rich-source h4 {
+  margin: 0;
+}
+
+.rich-source blockquote,
+.rich-citations blockquote {
+  margin: 4px 0 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--line-strong);
+}
+
+.rich-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rich-action {
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.rich-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.rich-block:focus-visible,
+.rich-source:focus-visible,
+.rich-action:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}

@@ -24,6 +24,7 @@ class AuthenticatedIdentity:
 class IdentityProvider(Protocol):
     async def authenticate(self, authorization: str | None) -> AuthenticatedIdentity: ...
 
+
 class OIDCJWTIdentityProvider:
     """Validate standard OIDC access-token claims against a remote JWKS."""
 

@@ -1407,13 +1407,17 @@ def check(values: dict[str, str], *, full: bool) -> None:
                 ROOT / "apps/api/src", context / "apps/api/src",
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
             )
+            docker_cfg = Path("/tmp/docta-docker-cfg")
+            docker_cfg.mkdir(parents=True, exist_ok=True)
+            (docker_cfg / "config.json").write_text("{}", encoding="utf-8")
+            docker_env = test_values | {"DOCKER_CONFIG": str(docker_cfg)}
             run(
                 ["docker", "build", "-f", str(ROOT / "infra/worker.Dockerfile"),
                  "-t", "docta-worker:latest", str(context)],
-                test_values, inherit_identity=False,
+                docker_env, inherit_identity=False,
             )
         run(["docker", "build", "-f", "infra/caddy.Dockerfile", "-t", "docta-proxy:vm", "infra"],
-            test_values, inherit_identity=False)
+            docker_env, inherit_identity=False)
         run(
             [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"],
             test_values,

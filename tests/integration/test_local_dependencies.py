@@ -27,7 +27,7 @@ def test_migrations_rebuild_database_to_current_revision() -> None:
     with psycopg.connect(str(settings.database_url)) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
 
-    assert revision == ("20261023_0009",)
+    assert revision == ("20261029_0010",)
 
 
 def test_migrations_accept_percent_encoded_database_password(monkeypatch) -> None:
@@ -37,12 +37,16 @@ def test_migrations_accept_percent_encoded_database_password(monkeypatch) -> Non
     role, database = f"docta_test_role_{suffix}", f"docta_test_db_{suffix}"
     password = "test:password@with%characters"
     with psycopg.connect(admin_url, autocommit=True) as connection:
-        connection.execute(sql.SQL("CREATE ROLE {} LOGIN SUPERUSER PASSWORD {}").format(
-            sql.Identifier(role), sql.Literal(password)
-        ))
-        connection.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(
-            sql.Identifier(database), sql.Identifier(role)
-        ))
+        connection.execute(
+            sql.SQL("CREATE ROLE {} LOGIN SUPERUSER PASSWORD {}").format(
+                sql.Identifier(role), sql.Literal(password)
+            )
+        )
+        connection.execute(
+            sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                sql.Identifier(database), sql.Identifier(role)
+            )
+        )
     try:
         host = settings.database_url.hosts()[0]
         target = (
@@ -54,7 +58,7 @@ def test_migrations_accept_percent_encoded_database_password(monkeypatch) -> Non
         command.upgrade(Config("apps/api/alembic.ini"), "head")
         with psycopg.connect(target) as connection:
             assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-                "20261023_0009",
+                "20261029_0010",
             )
     finally:
         get_settings.cache_clear()
@@ -93,9 +97,13 @@ async def test_storage_cors_allows_browser_upload() -> None:
     async with httpx.AsyncClient() as client:
         response = await client.options(
             str(settings.s3_endpoint_url),
-            headers={"Origin": "http://127.0.0.1:13000", "Access-Control-Request-Method": "PUT",
-                     "Access-Control-Request-Headers": "content-type,x-amz-meta-sha256"},
+            headers={
+                "Origin": "http://127.0.0.1:13000",
+                "Access-Control-Request-Method": "PUT",
+                "Access-Control-Request-Headers": "content-type,x-amz-meta-sha256",
+            },
         )
         assert response.headers.get("access-control-allow-origin") in {
-            "*", "http://127.0.0.1:13000",
+            "*",
+            "http://127.0.0.1:13000",
         }

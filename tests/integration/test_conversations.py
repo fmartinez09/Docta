@@ -142,10 +142,11 @@ def headers(token="student", key=None):
     return result
 
 
-async def ask(chat, question="velocidad", key="ask-1", token="student"):
+async def ask(chat, question="velocidad", key="ask-1", token="student", **extra):
+    payload = {"question": question, **extra}
     return await chat["client"].post(
         f"/api/v1/conversations/{chat['conversation']}/messages",
-        json={"question": question},
+        json=payload,
         headers=headers(token, key),
     )
 
@@ -623,3 +624,63 @@ async def test_new_questions_ignore_inactive_content_from_the_same_course(chat, 
     ]
     assert new_question["response"]["grounded"]
     assert new_question["response"]["citations"][0]["document_version_id"] == upload["version_id"]
+
+
+async def test_followup_without_antecedent_clarifies_immediately_without_model(chat):
+    # Student says "no sé" at conversation start; no activity exists yet.
+    response = events(await ask(chat, question="no sé", key="followup-start"))[-1][1]
+    assert response["response"]["mode"] == "clarify"
+    assert response["response"]["grounded"] is False
+    assert response["response"]["citations"] == []
+    assert response["response"]["intervention"]["situation"] == "ambiguous"
+    assert chat["model"].requests == []
+
+
+async def test_followup_with_antecedent_uses_stored_query_and_intent(chat):
+    # First, student establishes an activity.
+    first = events(await ask(chat, question="velocidad", key="first-activity"))[-1][1]
+    assert first["response"]["grounded"] is True
+
+    # Then, student says "no sé": resolved against first activity without model query rewrite.
+    second = events(await ask(chat, question="no sé", key="followup-activity"))[-1][1]
+    assert second["response"]["grounded"] is True
+    assert chat["model"].requests[-1].turn_kind == "followup"
+    assert chat["model"].requests[-1].turn_intent == "dont_know"
+    assert chat["model"].requests[-1].retrieval_query == "velocidad"
+
+
+async def test_action_turn_with_parent_message_and_idempotency(chat):
+    first = events(await ask(chat, question="velocidad", key="act-root"))[-1][1]
+    parent_id = first["id"]
+
+    # Student requests another hint via the actions endpoint.
+    res = await chat["client"].post(
+        f"/api/v1/conversations/{chat['conversation']}/actions",
+        json={"action": "another_hint", "parent_message_id": parent_id},
+        headers=headers("student", "act-hint-1"),
+    )
+    assert res.status_code == 200
+    terminal = events(res)[-1][1]
+    assert terminal["response"]["grounded"] is True
+    assert terminal["kind"] == "action"
+    assert terminal["intent"] == "another_hint"
+    assert terminal["parent_message_id"] == parent_id
+
+    # Double click with same idempotency key returns the existing turn.
+    res2 = await chat["client"].post(
+        f"/api/v1/conversations/{chat['conversation']}/actions",
+        json={"action": "another_hint", "parent_message_id": parent_id},
+        headers=headers("student", "act-hint-1"),
+    )
+    assert res2.status_code == 200
+    assert events(res2)[-1][1]["id"] == terminal["id"]
+
+    # Cross-conversation / invalid parent is rejected.
+    wrong_parent = str(uuid4())
+    res_bad = await chat["client"].post(
+        f"/api/v1/conversations/{chat['conversation']}/actions",
+        json={"action": "another_hint", "parent_message_id": wrong_parent},
+        headers=headers("student", "act-hint-bad"),
+    )
+    assert res_bad.status_code == 400
+    assert res_bad.json()["code"] == "invalid_parent_message"

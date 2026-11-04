@@ -1,11 +1,13 @@
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from time import perf_counter
+from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -38,13 +40,57 @@ from docta_api.rag import (
     TutorDraft,
     TutorRequest,
 )
+from docta_api.tutor_contract import help_level
 
 logger = logging.getLogger("docta.conversation")
+
+
+def _detect_intent(text: str) -> tuple[str, str | None]:
+    """Detect if a user question is a common brief follow-up."""
+    cleaned = re.sub(r"[^\w\s]", "", text.strip().lower())
+    phrase = " ".join(cleaned.split())
+    if phrase in {
+        "no se",
+        "no sé",
+        "no entiendo",
+        "no comprendo",
+        "no tengo idea",
+        "no me sale",
+        "ayuda",
+        "estoy bloqueado",
+    }:
+        return "followup", "dont_know"
+    if phrase in {
+        "otra pista",
+        "dame una pista",
+        "dame otra pista",
+        "mas pistas",
+        "más pistas",
+        "otra ayuda",
+        "siguiente pista",
+    }:
+        return "followup", "another_hint"
+    if phrase in {
+        "explicame",
+        "explícame",
+        "explicamelo",
+        "explícamelo",
+        "explicame eso",
+        "explícame eso",
+        "no me queda claro",
+        "puedes explicar",
+        "puedes explicarlo",
+    }:
+        return "followup", "explain"
+    return "question", None
 
 
 class QuestionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     question: str = Field(min_length=1, max_length=4000)
+    kind: Literal["question", "followup", "action"] = "question"
+    intent: Literal["another_hint", "explain", "dont_know"] | None = None
+    parent_message_id: UUID | None = None
 
     @field_validator("question")
     @classmethod
@@ -52,6 +98,21 @@ class QuestionRequest(BaseModel):
         if not value.strip():
             raise ValueError("question must not be blank")
         return value
+
+    @model_validator(mode="after")
+    def validate_action_fields(self) -> "QuestionRequest":
+        if self.kind == "action" and self.parent_message_id is None:
+            raise ValueError("parent_message_id is required for action turns")
+        if self.kind != "action" and self.parent_message_id is not None:
+            raise ValueError("parent_message_id is only allowed for action turns")
+        return self
+
+
+class ActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["another_hint", "explain"]
+    parent_message_id: UUID
+    question: str | None = Field(default=None, max_length=4000)
 
 
 class CitationView(BaseModel):
@@ -71,6 +132,7 @@ class AnswerView(BaseModel):
     answer: str
     grounded: bool
     citations: list[CitationView]
+    intervention: dict | None = None
 
 
 class MessageView(BaseModel):
@@ -86,6 +148,9 @@ class MessageView(BaseModel):
     failure_message: str | None
     created_at: datetime
     completed_at: datetime | None
+    kind: str = "question"
+    intent: str | None = None
+    parent_message_id: UUID | None = None
 
 
 class ConversationView(BaseModel):
@@ -203,6 +268,10 @@ class ConversationService:
         question: str,
         key: str | None,
         correlation_id: str,
+        *,
+        kind: str = "question",
+        intent: str | None = None,
+        parent_message_id: UUID | None = None,
     ) -> AcceptedMessage:
         key = idempotency_key(key)
         with self.database.session() as session:
@@ -248,6 +317,63 @@ class ConversationService:
                 .where(Course.id == conversation.course_id, CorpusVersion.state == "READY")
             )
             now = session.scalar(select(func.clock_timestamp()))
+
+            retrieval_query: str | None = None
+            query_version: str | None = None
+            if kind == "action":
+                if parent_message_id is None:
+                    raise APIError(
+                        400, "invalid_parent_message", "Action turns require a parent message."
+                    )
+                parent = session.scalar(
+                    select(Message).where(
+                        Message.id == parent_message_id,
+                        Message.conversation_id == conversation_id,
+                        Message.course_id == conversation.course_id,
+                        Message.state == MessageState.COMPLETED,
+                    )
+                )
+                if parent is None:
+                    raise APIError(
+                        400,
+                        "invalid_parent_message",
+                        "Parent message is invalid or not completed.",
+                    )
+                retrieval_query = parent.retrieval_query or parent.question
+                query_version = "antecedent-v1"
+            elif kind == "followup":
+                antecedent = session.scalar(
+                    select(Message)
+                    .where(
+                        Message.conversation_id == conversation_id,
+                        Message.sequence < conversation.next_sequence,
+                        Message.state == MessageState.COMPLETED,
+                    )
+                    .order_by(Message.sequence.desc())
+                    .limit(1)
+                )
+                if antecedent is not None and antecedent.mode not in ("abstain", "clarify"):
+                    retrieval_query = antecedent.retrieval_query or antecedent.question
+                    query_version = "antecedent-v1"
+            else:
+                detected_kind, detected_intent = _detect_intent(question)
+                if detected_kind == "followup":
+                    kind = detected_kind
+                    intent = detected_intent
+                    antecedent = session.scalar(
+                        select(Message)
+                        .where(
+                            Message.conversation_id == conversation_id,
+                            Message.sequence < conversation.next_sequence,
+                            Message.state == MessageState.COMPLETED,
+                        )
+                        .order_by(Message.sequence.desc())
+                        .limit(1)
+                    )
+                    if antecedent is not None and antecedent.mode not in ("abstain", "clarify"):
+                        retrieval_query = antecedent.retrieval_query or antecedent.question
+                        query_version = "antecedent-v1"
+
             message = Message(
                 id=uuid4(),
                 course_id=conversation.course_id,
@@ -261,6 +387,11 @@ class ConversationService:
                 prompt_version=PROMPT_VERSION,
                 retrieval_config_version=self.retrieval_version,
                 model_version=self.model_version,
+                kind=kind,
+                intent=intent,
+                parent_message_id=parent_message_id,
+                retrieval_query=retrieval_query,
+                query_version=query_version,
                 deadline_at=now + timedelta(seconds=self.message_timeout_seconds),
             )
             conversation.next_sequence += 1
@@ -329,6 +460,10 @@ class ConversationService:
             accepted.correlation_id,
         )
         with self.database.session() as session:
+            db_msg = session.scalar(select(Message).where(Message.id == message.id))
+            if db_msg is None:
+                raise RAGFailure("PROCESSING_INTERRUPTED")
+            needs_antecedent = db_msg.kind == "followup" and db_msg.retrieval_query is None
             rows = session.scalars(
                 select(Message)
                 .where(
@@ -346,9 +481,25 @@ class ConversationService:
                 size = len(previous.question) + len(answer)
                 if size > remaining:
                     break
-                history.append(HistoryTurn(previous.question, answer))
+                history.append(
+                    HistoryTurn(
+                        previous.question,
+                        answer,
+                        situation=previous.situation,
+                        help_level=previous.help_level or 0,
+                    )
+                )
                 remaining -= size
-            return TutorRequest(scope, message.question, evidence, tuple(reversed(history)))
+            return TutorRequest(
+                scope=scope,
+                question=message.question,
+                evidence=evidence,
+                history=tuple(reversed(history)),
+                turn_kind=db_msg.kind,
+                turn_intent=db_msg.intent,
+                retrieval_query=db_msg.retrieval_query,
+                needs_antecedent=needs_antecedent,
+            )
 
     def save_evidence(self, accepted: AcceptedMessage, evidence: tuple[Evidence, ...]) -> None:
         with self.database.session() as session:
@@ -412,6 +563,11 @@ class ConversationService:
             message.answer = draft.answer
             message.mode = draft.mode
             message.grounded = draft.grounded
+            if draft.intervention is not None:
+                message.intervention = draft.intervention.model_dump(mode="json")
+                message.contract_version = draft.intervention.version
+                message.situation = draft.intervention.situation
+                message.help_level = help_level(draft.intervention)
             message.state = MessageState.COMPLETED
             message.completed_at = func.clock_timestamp()
 
@@ -484,6 +640,7 @@ class ConversationService:
                 mode=message.mode,
                 answer=message.answer,
                 grounded=message.grounded,
+                intervention=message.intervention,
                 citations=[
                     CitationView(
                         chunk_id=e.chunk_id,
@@ -516,6 +673,9 @@ class ConversationService:
             ),
             created_at=message.created_at,
             completed_at=message.completed_at,
+            kind=message.kind,
+            intent=message.intent,
+            parent_message_id=message.parent_message_id,
         )
 
     @staticmethod

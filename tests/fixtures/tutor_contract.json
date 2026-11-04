@@ -1,0 +1,214 @@
+{
+  "contract_version": "tutor-intervention-v2",
+  "cases": [
+    {
+      "name": "entry_question",
+      "valid": true,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "entry",
+        "blocks": [{"type": "question", "text": "¿Qué causa crees que explica la crisis?"}],
+        "citations": [{"chunk_id": "11111111-1111-4111-8111-111111111111", "quote": "la crisis fiscal debilitó al Estado"}],
+        "grounded": true
+      },
+      "text": "¿Qué causa crees que explica la crisis?",
+      "actions": ["another_hint", "explain", "view_source"]
+    },
+    {
+      "name": "sequence_diagram_with_sources",
+      "valid": true,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "missing_concept",
+        "blocks": [
+          {"type": "explanation", "title": "Crisis fiscal", "text": "Es la falta de recursos del Estado."},
+          {
+            "type": "diagram",
+            "kind": "sequence",
+            "title": "Causas",
+            "nodes": [{"id": "a", "label": "Crisis"}, {"id": "b", "label": "Revuelta"}],
+            "edges": [{"source": "a", "target": "b", "label": "provoca"}]
+          },
+          {"type": "sources", "citation_indexes": [0]}
+        ],
+        "citations": [{"chunk_id": "11111111-1111-4111-8111-111111111111", "quote": "la crisis fiscal debilitó al Estado"}],
+        "grounded": true
+      },
+      "text": "Crisis fiscal. Es la falta de recursos del Estado.\n\nSecuencia: Causas. Crisis → Revuelta (provoca).\n\nFuentes: [1].",
+      "actions": ["another_hint", "explain", "view_source"]
+    },
+    {
+      "name": "grounded_closing_has_no_more_hint",
+      "valid": true,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "grounded",
+        "blocks": [{"type": "question", "text": "¿Cómo aplicarías esto a otro caso?"}],
+        "citations": [{"chunk_id": "11111111-1111-4111-8111-111111111111", "quote": "la crisis fiscal debilitó al Estado"}],
+        "grounded": true
+      },
+      "text": "¿Cómo aplicarías esto a otro caso?",
+      "actions": ["explain", "view_source"]
+    },
+    {
+      "name": "clarification_without_citations",
+      "valid": true,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "ambiguous",
+        "blocks": [{"type": "question", "text": "¿Qué consigna estás trabajando?"}],
+        "citations": [],
+        "grounded": false
+      },
+      "text": "¿Qué consigna estás trabajando?",
+      "actions": []
+    },
+    {
+      "name": "abstention",
+      "valid": true,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "insufficient_evidence",
+        "blocks": [{"type": "explanation", "title": "Sin evidencia", "text": "El material no cubre este punto."}],
+        "citations": [],
+        "grounded": false
+      },
+      "text": "Sin evidencia. El material no cubre este punto.",
+      "actions": []
+    },
+    {
+      "name": "factual_without_citations",
+      "valid": false,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "partial",
+        "blocks": [{"type": "hint", "level": 1, "text": "Revisa el párrafo."}],
+        "citations": [],
+        "grounded": true
+      }
+    },
+    {
+      "name": "two_questions",
+      "valid": false,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "ambiguous",
+        "blocks": [{"type": "question", "text": "a"}, {"type": "question", "text": "b"}],
+        "citations": [],
+        "grounded": false
+      }
+    },
+    {
+      "name": "clarification_with_fact",
+      "valid": false,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "ambiguous",
+        "blocks": [{"type": "explanation", "title": "x", "text": "un hecho"}],
+        "citations": [],
+        "grounded": false
+      }
+    },
+    {
+      "name": "unknown_block_type",
+      "valid": false,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "entry",
+        "blocks": [{"type": "html", "text": "<b>x</b>"}],
+        "citations": [{"chunk_id": "11111111-1111-4111-8111-111111111111", "quote": "la crisis fiscal debilitó al Estado"}],
+        "grounded": true
+      }
+    },
+    {
+      "name": "source_index_out_of_range",
+      "valid": false,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "entry",
+        "blocks": [{"type": "sources", "citation_indexes": [2]}],
+        "citations": [{"chunk_id": "11111111-1111-4111-8111-111111111111", "quote": "la crisis fiscal debilitó al Estado"}],
+        "grounded": true
+      }
+    },
+    {
+      "name": "diagram_unknown_node",
+      "valid": false,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "entry",
+        "blocks": [
+          {
+            "type": "diagram",
+            "kind": "relations",
+            "title": "t",
+            "nodes": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+            "edges": [{"source": "a", "target": "z", "label": ""}]
+          }
+        ],
+        "citations": [{"chunk_id": "11111111-1111-4111-8111-111111111111", "quote": "la crisis fiscal debilitó al Estado"}],
+        "grounded": true
+      }
+    },
+    {
+      "name": "extra_field",
+      "valid": false,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "entry",
+        "blocks": [{"type": "question", "text": "a", "style": "<script>"}],
+        "citations": [{"chunk_id": "11111111-1111-4111-8111-111111111111", "quote": "la crisis fiscal debilitó al Estado"}],
+        "grounded": true
+      }
+    },
+    {
+      "name": "activity_v2",
+      "valid": true,
+      "value": {
+        "version": "tutor-intervention-v2",
+        "situation": "entry",
+        "blocks": [{
+          "type": "activity",
+          "question": "¿Cuál es la causa?",
+          "options": [{"id": "a", "text": "La crisis fiscal"}, {"id": "b", "text": "El clima"}],
+          "correct_option_id": "a",
+          "hint": "Busca en la fuente.",
+          "explanation": "La fuente menciona la crisis fiscal."
+        }],
+        "citations": [{"chunk_id": "11111111-1111-4111-8111-111111111111", "quote": "la crisis fiscal debilitó al Estado"}],
+        "grounded": true
+      },
+      "text": "Ahora te toca razonar: ¿Cuál es la causa?\nA. La crisis fiscal\nB. El clima",
+      "actions": ["another_hint", "explain", "view_source"]
+    },
+    {
+      "name": "activity_in_v1",
+      "valid": false,
+      "value": {
+        "version": "tutor-intervention-v1",
+        "situation": "entry",
+        "blocks": [{
+          "type": "activity",
+          "question": "¿Cuál es la causa?",
+          "options": [{"id": "a", "text": "Crisis"}, {"id": "b", "text": "Clima"}],
+          "correct_option_id": "a",
+          "hint": "Busca en la fuente.",
+          "explanation": "La fuente menciona la crisis."
+        }],
+        "citations": [{"chunk_id": "11111111-1111-4111-8111-111111111111", "quote": "la crisis fiscal debilitó al Estado"}],
+        "grounded": true
+      }
+    },
+    {
+      "name": "wrong_version",
+      "valid": false,
+      "value": {
+        "version": "tutor-intervention-v3",
+        "situation": "ambiguous",
+        "blocks": [{"type": "question", "text": "a"}],
+        "citations": [],
+        "grounded": false
+      }
+    }
+  ]
+}

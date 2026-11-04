@@ -14,7 +14,8 @@ from docta_api.config import Settings
 pytestmark = pytest.mark.integration
 
 PREVIOUS_REVISION = "20260907_0008"
-HEAD_REVISION = "20261023_0009"
+EMBEDDINGS_REVISION = "20261023_0009"
+HEAD_REVISION = "20261029_0010"
 
 
 def _alembic() -> Config:
@@ -149,7 +150,8 @@ def test_scope_index_covers_course_corpus_and_version(connection) -> None:
 def test_migration_history_has_a_single_head() -> None:
     script = ScriptDirectory.from_config(_alembic())
     assert script.get_heads() == [HEAD_REVISION]
-    assert script.get_revision(HEAD_REVISION).down_revision == PREVIOUS_REVISION
+    assert script.get_revision(EMBEDDINGS_REVISION).down_revision == PREVIOUS_REVISION
+    assert script.get_revision(HEAD_REVISION).down_revision == EMBEDDINGS_REVISION
 
 
 def test_downgrade_drops_table_and_extension_then_upgrade_restores_them() -> None:
